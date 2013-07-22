@@ -6,31 +6,33 @@
 #include "hotfixes.h"
 
 #define HOTFIX_PEEK_REQUEST	0
-#define HOTFIX_PUT_REQUEST	1
+#define HOTFIX_END_BIDI_REQUEST	1
 
 static struct request* (*p_blk_peek_request)(struct request_queue *q);
-void (*p_blk_put_request)(struct request *req);
+bool (*p_blk_end_bidi_request)(struct request *req, int error,
+		unsigned int nr_bytes, unsigned int bidi_bytes);
 
 static struct ali_sym_addr hot_latency_sym_addr_list[] = {
 	ALI_DEFINE_SYM_ADDR(blk_peek_request),
-	ALI_DEFINE_SYM_ADDR(blk_put_request),
+	ALI_DEFINE_SYM_ADDR(blk_end_bidi_request),
 	{},
 };
 
 static struct request* overwrite_blk_peek_request(struct request_queue *q);
-static void overwrite_blk_put_request(struct request *req);
+static bool overwrite_blk_end_bidi_request(struct request *req, int error,
+		unsigned int nr_bytes, unsigned int bidi_bytes);
 
 static struct ali_hotfix_desc hot_latency_hotfix_list[] = {
 
-	[HOTFIX_PEEK_REQUEST] = ALI_DEFINE_HOTFIX(\
+	[HOTFIX_PEEK_REQUEST] = ALI_DEFINE_HOTFIX( \
 			"block: blk_peek_request", \
 			"blk_peek_request", \
 			overwrite_blk_peek_request),
 
-	[HOTFIX_PUT_REQUEST] = ALI_DEFINE_HOTFIX(\
-			"block: blk_put_request", \
-			"blk_put_request", \
-			overwrite_blk_put_request),
+	[HOTFIX_END_BIDI_REQUEST] = ALI_DEFINE_HOTFIX( \
+			"block: blk_end_bidi_request", \
+			"blk_end_bidi_request", \
+			overwrite_blk_end_bidi_request),
 
 	{},
 };
@@ -42,17 +44,22 @@ static struct request* overwrite_blk_peek_request(struct request_queue *q)
 	orig_blk_peek_request =
 		ali_hotfix_orig_func(&hot_latency_hotfix_list[HOTFIX_PEEK_REQUEST]);
 	req = orig_blk_peek_request(q);
-	printk("%p\n", req);
+	if (req)
+		printk("peek %p\n", req);
 	return req;
 }
 
-static void (*orig_blk_put_request)(struct request *req);
-static void overwrite_blk_put_request(struct request *req)
+static bool (*orig_blk_end_bidi_request)(struct request *req, int error,
+		unsigned int nr_bytes, unsigned int bidi_bytes);
+static bool overwrite_blk_end_bidi_request(struct request *req, int error,
+		unsigned int nr_bytes, unsigned int bidi_bytes)
 {
-	printk("%p\n", req);
-	orig_blk_put_request =
-		ali_hotfix_orig_func(&hot_latency_hotfix_list[HOTFIX_PUT_REQUEST]);
-	orig_blk_put_request(req);
+	orig_blk_end_bidi_request =
+		ali_hotfix_orig_func(
+			&hot_latency_hotfix_list[HOTFIX_END_BIDI_REQUEST]);
+	if (req)
+		printk("end %p\n", req);
+	return orig_blk_end_bidi_request(req, error, nr_bytes, bidi_bytes);
 }
 
 static int __init hot_latency_init(void)
@@ -60,7 +67,8 @@ static int __init hot_latency_init(void)
 	int r;
 
 	if (ali_get_symbol_address_list(hot_latency_sym_addr_list, &r)) {
-		printk("Can't get address of %s\n", hot_latency_sym_addr_list[r].name);
+		printk("Can't get address of %s\n",
+				hot_latency_sym_addr_list[r].name);
 		return -EINVAL;
 	}
 
@@ -68,7 +76,8 @@ static int __init hot_latency_init(void)
 	if (r)
 		return r;
 
-	if (!ali_hotfix_orig_func(&hot_latency_hotfix_list[HOTFIX_PUT_REQUEST])) {
+	if (!ali_hotfix_orig_func(
+			&hot_latency_hotfix_list[HOTFIX_END_BIDI_REQUEST])) {
 		printk("Register fail\n");
 		ali_hotfix_unregister_list(hot_latency_hotfix_list);
 		return -ENODEV;
@@ -83,4 +92,6 @@ static void __exit hot_latency_exit(void)
 
 module_init(hot_latency_init)
 module_exit(hot_latency_exit)
+MODULE_AUTHOR("Robin Dong <sanbai@taobao.com>");
+MODULE_DESCRIPTION("Collect statistics about io-latency");
 MODULE_LICENSE("GPL");

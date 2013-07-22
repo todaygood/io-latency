@@ -8,3 +8,10 @@ all:
 
 clean:
 	make -C ${KERNEL_DEVEL_DIR} M=`pwd` clean
+
+unsetup:
+	rmmod hot-latency
+	rmmod hotfixes
+setup:
+	insmod hotfixes.ko
+	insmod hot-latency.ko
