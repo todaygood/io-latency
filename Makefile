@@ -1,4 +1,5 @@
-obj-m += hot-latency.o
+obj-m += latency.o
+latency-objs +=  hot-latency.o hash_table.o
 obj-m += hotfixes.o
 
 KERNEL_DEVEL_DIR=/lib/modules/`uname -r`/build
@@ -10,8 +11,8 @@ clean:
 	make -C ${KERNEL_DEVEL_DIR} M=`pwd` clean
 
 unsetup:
-	rmmod hot-latency
+	rmmod latency
 	rmmod hotfixes
 setup:
 	insmod hotfixes.ko
-	insmod hot-latency.ko
+	insmod latency.ko

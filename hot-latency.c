@@ -8,12 +8,16 @@
 #include <scsi/scsi_device.h>
 
 #include "hotfixes.h"
+#include "hash_table.h"
 
 #define HOTFIX_PEEK_REQUEST	0
 #define HOTFIX_END_BIDI_REQUEST	1
 
+#define HASH_MAX_REQUEST_QUEUE	100
+
 static struct proc_dir_entry *proc_hot_latency;
 static struct class *sd_disk_class;
+static struct hash_table *request_queue_list;
 
 static struct request* (*p_blk_peek_request)(struct request_queue *q);
 bool (*p_blk_end_bidi_request)(struct request *req, int error,
@@ -96,11 +100,17 @@ static bool (*orig_blk_end_bidi_request)(struct request *req, int error,
 static bool overwrite_blk_end_bidi_request(struct request *req, int error,
 		unsigned int nr_bytes, unsigned int bidi_bytes)
 {
+	struct hash_node *nd;
 	orig_blk_end_bidi_request =
 		ali_hotfix_orig_func(
 			&hot_latency_hotfix_list[HOTFIX_END_BIDI_REQUEST]);
-	if (req)
+	if (req) {
 		printk("end %p %p\n", req, req->q);
+		nd = hash_table_find(request_queue_list,
+				(unsigned long)(req->q));
+		if (nd)
+			nd->value++;
+	}
 	return orig_blk_end_bidi_request(req, error, nr_bytes, bidi_bytes);
 }
 
@@ -126,7 +136,13 @@ static void io_latency_seq_stop(struct seq_file *seq, void *v)
 static int io_latency_seq_show(struct seq_file *seq, void *v)
 {
 	struct request_queue *q = seq->private;
-	seq_printf(seq, "%p\n", q);
+	struct hash_node *nd;
+
+	nd = hash_table_find(request_queue_list, (unsigned long)q);
+	if (!nd)
+		seq_puts(seq, "none");
+	else
+		seq_printf(seq, "%lu\n", nd->value);
 	return 0;
 }
 
@@ -179,6 +195,9 @@ static int create_procfs(void)
 		sprintf(node_name, "%s/io_latency_reset", dev_name);
 		proc_create_data(node_name, 0, NULL, proc_io_latency_reset,
 				sd->device->request_queue);*/
+		hash_table_insert(request_queue_list,
+				(unsigned long)(sd->device->request_queue),
+				0);
 		printk("queue:%p\n", sd->device->request_queue);
 	}
 	class_dev_iter_exit(&iter);
@@ -223,6 +242,11 @@ static int __init hot_latency_init(void)
 		return -EINVAL;
 	}
 
+	request_queue_list = create_hash_table(HASH_MAX_REQUEST_QUEUE);
+	if (!request_queue_list) {
+		ali_hotfix_unregister_list(hot_latency_hotfix_list);
+		return -ENOMEM;
+	}
 	/* create /proc/hot-latency/ */
 	r = create_procfs();
 	if (r)
@@ -234,6 +258,7 @@ static int __init hot_latency_init(void)
 static void __exit hot_latency_exit(void)
 {
 	delete_procfs();
+	destroy_hash_table(request_queue_list);
 	ali_hotfix_unregister_list(hot_latency_hotfix_list);
 }
 
