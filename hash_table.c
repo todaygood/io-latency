@@ -19,7 +19,7 @@ struct hash_node *hash_table_find(struct hash_table *table, unsigned long key)
 	return NULL;
 }
 
-struct hash_table *create_hash_table(int nr_ent)
+struct hash_table *create_hash_table(const char *name, int nr_ent)
 {
 	struct hash_table *table;
 
@@ -33,8 +33,8 @@ struct hash_table *create_hash_table(int nr_ent)
 		return NULL;
 	}
 
-	table->cache = kmem_cache_create("hot-latency-hash-table",
-				sizeof(struct hash_node), 0, 0, NULL);
+	table->cache = kmem_cache_create(name, sizeof(struct hash_node),
+					0, 0, NULL);
 	if (!table->cache) {
 		kfree(table->tbl);
 		kfree(table);
@@ -62,7 +62,7 @@ int hash_table_insert(struct hash_table *table, unsigned long key,
 	if (nd)
 		return -EEXIST;
 
-	nd = kmem_cache_zalloc(table->cache, GFP_KERNEL);
+	nd = kmem_cache_zalloc(table->cache, GFP_NOWAIT);
 	if (!nd)
 		return -ENOMEM;
 

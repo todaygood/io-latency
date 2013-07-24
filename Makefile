@@ -1,5 +1,5 @@
 obj-m += latency.o
-latency-objs +=  hot-latency.o hash_table.o
+latency-objs +=  hot-latency.o hash_table.o latency_stats.o
 obj-m += hotfixes.o
 
 KERNEL_DEVEL_DIR=/lib/modules/`uname -r`/build

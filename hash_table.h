@@ -15,7 +15,7 @@ struct hash_node {
 	unsigned long value;
 };
 
-struct hash_table *create_hash_table(int nr_ent);
+struct hash_table *create_hash_table(const char *name, int nr_ent);
 void destroy_hash_table(struct hash_table *table);
 
 int hash_table_insert(struct hash_table *table, unsigned long key,
