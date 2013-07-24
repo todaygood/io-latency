@@ -1,5 +1,5 @@
-#ifndef _HOT_LATENCY_HASH_TABLE_H_
-#define _HOT_LATENCY_HASH_TABLE_H_
+#ifndef _IO_LATENCY_HASH_TABLE_H_
+#define _IO_LATENCY_HASH_TABLE_H_
 
 #include <linux/slab.h>
 

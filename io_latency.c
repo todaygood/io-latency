@@ -17,13 +17,13 @@
 #define HASH_MAX_REQUEST_QUEUE	100
 #define HASH_MAX_REQUESTS	10000
 
-static struct proc_dir_entry *proc_hot_latency;
+static struct proc_dir_entry *proc_io_latency;
 static struct class *sd_disk_class;
 static struct hash_table *request_queue_table;
 static struct hash_table *request_table;
 
 static struct request* (*p_blk_peek_request)(struct request_queue *q);
-bool (*p_blk_end_bidi_request)(struct request *req, int error,
+static bool (*p_blk_end_bidi_request)(struct request *req, int error,
 		unsigned int nr_bytes, unsigned int bidi_bytes);
 
 struct scsi_disk {
@@ -61,7 +61,7 @@ struct scsi_disk {
 	unsigned	ws16 : 1;
 };
 
-static struct ali_sym_addr hot_latency_sym_addr_list[] = {
+static struct ali_sym_addr io_latency_sym_addr_list[] = {
 	ALI_DEFINE_SYM_ADDR(blk_peek_request),
 	ALI_DEFINE_SYM_ADDR(blk_end_bidi_request),
 	{},
@@ -71,7 +71,7 @@ static struct request* overwrite_blk_peek_request(struct request_queue *q);
 static bool overwrite_blk_end_bidi_request(struct request *req, int error,
 		unsigned int nr_bytes, unsigned int bidi_bytes);
 
-static struct ali_hotfix_desc hot_latency_hotfix_list[] = {
+static struct ali_hotfix_desc io_latency_hotfix_list[] = {
 
 	[HOTFIX_PEEK_REQUEST] = ALI_DEFINE_HOTFIX( \
 			"block: blk_peek_request", \
@@ -91,7 +91,7 @@ static struct request* overwrite_blk_peek_request(struct request_queue *q)
 {
 	struct request *req;
 	orig_blk_peek_request =
-		ali_hotfix_orig_func(&hot_latency_hotfix_list[HOTFIX_PEEK_REQUEST]);
+		ali_hotfix_orig_func(&io_latency_hotfix_list[HOTFIX_PEEK_REQUEST]);
 	req = orig_blk_peek_request(q);
 	if (req)
 		hash_table_insert(request_table, (unsigned long)req, jiffies);
@@ -110,7 +110,7 @@ static bool overwrite_blk_end_bidi_request(struct request *req, int error,
 
 	orig_blk_end_bidi_request =
 		ali_hotfix_orig_func(
-			&hot_latency_hotfix_list[HOTFIX_END_BIDI_REQUEST]);
+			&io_latency_hotfix_list[HOTFIX_END_BIDI_REQUEST]);
 	if (req) {
 		res = hash_table_find_and_remove(request_table,
 				(unsigned long)req, &stime);
@@ -126,7 +126,7 @@ static bool overwrite_blk_end_bidi_request(struct request *req, int error,
 	return orig_blk_end_bidi_request(req, error, nr_bytes, bidi_bytes);
 }
 
-void *PDE_DATA(const struct inode *inode)
+static void *PDE_DATA(const struct inode *inode)
 {
 	return container_of(inode, struct proc_inode, vfs_inode)->pde->data;
 }
@@ -150,16 +150,16 @@ static ssize_t io_latency_ms_show(struct latency_stats *lstats, char *buf)
 	int slot_base = 0;
 	int i, nr, ptr;
 
-	for (ptr = 0, i = 0; i < HOT_LATENCY_STATS_MS_NR; i++) {
+	for (ptr = 0, i = 0; i < IO_LATENCY_STATS_MS_NR; i++) {
 		nr = sprintf(buf + ptr,
 			"%d-%d(ms):%d\n",
 			slot_base,
-			slot_base + HOT_LATENCY_STATS_MS_GRAINSIZE - 1,
+			slot_base + IO_LATENCY_STATS_MS_GRAINSIZE - 1,
 			atomic_read(&(lstats->latency_stats_ms[i])));
 		if (nr < 0)
 			break;
 
-		slot_base += HOT_LATENCY_STATS_MS_GRAINSIZE;
+		slot_base += IO_LATENCY_STATS_MS_GRAINSIZE;
 		ptr += nr;
 	}
 
@@ -202,7 +202,7 @@ static int proc_io_latency_open(struct inode *inode, struct file *file)
 	return res;
 }
 
-static const struct file_operations proc_io_latency = {
+static const struct file_operations proc_io_latency_fops = {
 	.owner		= THIS_MODULE,
 	.open		= proc_io_latency_open,
 	.read		= seq_read,
@@ -218,18 +218,18 @@ static int create_procfs(void)
 	struct proc_dir_entry *proc_node;
 	struct latency_stats *lstats;
 
-	proc_hot_latency = proc_mkdir("hot-latency", NULL);
-	if (!proc_hot_latency)
+	proc_io_latency = proc_mkdir("io-latency", NULL);
+	if (!proc_io_latency)
 		goto err1;
 
 	class_dev_iter_init(&iter, sd_disk_class, NULL, NULL);
 	while ((dev = class_dev_iter_next(&iter))) {
 		sd = container_of(dev, struct scsi_disk, dev);
-		proc_node = proc_mkdir(sd->disk->disk_name, proc_hot_latency);
+		proc_node = proc_mkdir(sd->disk->disk_name, proc_io_latency);
 		if (!proc_node)
 			printk("%s create fail\n", sd->disk->disk_name);
 		proc_create_data("io_latency_ms", 0, proc_node,
-				&proc_io_latency, sd->device->request_queue);
+				&proc_io_latency_fops, sd->device->request_queue);
 		/*
 		sprintf(node_name, "%s/io_latency_reset", dev_name);
 		proc_create_data(node_name, 0, NULL, proc_io_latency_reset,
@@ -249,28 +249,28 @@ err1:
 
 static void delete_procfs(void)
 {
-	if (proc_hot_latency) {
-		proc_hot_latency = NULL;
-		remove_proc_entry("hot-latency", NULL);
+	if (proc_io_latency) {
+		proc_io_latency = NULL;
+		remove_proc_entry("io-latency", NULL);
 	}
 }
 
-static int __init hot_latency_init(void)
+static int __init io_latency_init(void)
 {
 	int res;
 
-	if (ali_get_symbol_address_list(hot_latency_sym_addr_list, &res)) {
+	if (ali_get_symbol_address_list(io_latency_sym_addr_list, &res)) {
 		printk("Can't get address of %s\n",
-				hot_latency_sym_addr_list[res].name);
+				io_latency_sym_addr_list[res].name);
 		return -EINVAL;
 	}
 
-	res = ali_hotfix_register_list(hot_latency_hotfix_list);
+	res = ali_hotfix_register_list(io_latency_hotfix_list);
 	if (res)
 		return res;
 
 	if (!ali_hotfix_orig_func(
-			&hot_latency_hotfix_list[HOTFIX_END_BIDI_REQUEST])) {
+			&io_latency_hotfix_list[HOTFIX_END_BIDI_REQUEST])) {
 		printk("Register fail\n");
 		res = -ENODEV;
 		goto err;
@@ -299,26 +299,26 @@ static int __init hot_latency_init(void)
 	if (res)
 		goto err;
 
-	/* create /proc/hot-latency/ */
+	/* create /proc/io-latency/ */
 	res = create_procfs();
 	if (res)
 		goto err;
 
 	return 0;
 err:
-	ali_hotfix_unregister_list(hot_latency_hotfix_list);
+	ali_hotfix_unregister_list(io_latency_hotfix_list);
 	return res;
 }
 
-static void __exit hot_latency_exit(void)
+static void __exit io_latency_exit(void)
 {
 	delete_procfs();
 	destroy_hash_table(request_queue_table);
-	ali_hotfix_unregister_list(hot_latency_hotfix_list);
+	ali_hotfix_unregister_list(io_latency_hotfix_list);
 }
 
-module_init(hot_latency_init)
-module_exit(hot_latency_exit)
+module_init(io_latency_init)
+module_exit(io_latency_exit)
 MODULE_AUTHOR("Robin Dong <sanbai@taobao.com>");
 MODULE_DESCRIPTION("Collect statistics about io-latency");
 MODULE_LICENSE("GPL");

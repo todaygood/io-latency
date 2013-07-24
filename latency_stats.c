@@ -31,7 +31,7 @@ static unsigned long long ms2secs(unsigned long long msec)
 
 int init_latency_stats(void)
 {
-	latency_stats_cache = kmem_cache_create("hot-latency-stats",
+	latency_stats_cache = kmem_cache_create("io-latency-stats",
 			sizeof(struct latency_stats), 0, 0, NULL);
 	if (!latency_stats_cache)
 		return -ENOMEM;
@@ -54,9 +54,9 @@ struct latency_stats *create_latency_stats(void)
 		return (struct latency_stats *)-ENOMEM;
 
 	/* initial latency stats buckets */
-	for (r = 0; r < HOT_LATENCY_STATS_S_NR; r++)
+	for (r = 0; r < IO_LATENCY_STATS_S_NR; r++)
 		atomic_set(&(lstats->latency_stats_s[r]), 0);
-	for (r = 0; r < HOT_LATENCY_STATS_MS_NR; r++)
+	for (r = 0; r < IO_LATENCY_STATS_MS_NR; r++)
 		atomic_set(&(lstats->latency_stats_ms[r]), 0);
 
 	return lstats;
@@ -84,15 +84,15 @@ void update_latency_stats(struct latency_stats *lstats, unsigned long stime)
 	latency = now - stime;
 	if (latency < 1000) {
 		/* milliseconds */
-		idx = latency/HOT_LATENCY_STATS_MS_GRAINSIZE;
-		if (idx > (HOT_LATENCY_STATS_MS_NR - 1))
-			idx = HOT_LATENCY_STATS_MS_NR - 1;
+		idx = latency/IO_LATENCY_STATS_MS_GRAINSIZE;
+		if (idx > (IO_LATENCY_STATS_MS_NR - 1))
+			idx = IO_LATENCY_STATS_MS_NR - 1;
 		atomic_inc(&(lstats->latency_stats_ms[idx]));
 	} else {
 		/* seconds */
-		idx = ms2secs(latency)/HOT_LATENCY_STATS_S_GRAINSIZE;
-		if (idx > (HOT_LATENCY_STATS_S_NR - 1))
-			idx = HOT_LATENCY_STATS_S_NR - 1;
+		idx = ms2secs(latency)/IO_LATENCY_STATS_S_GRAINSIZE;
+		if (idx > (IO_LATENCY_STATS_S_NR - 1))
+			idx = IO_LATENCY_STATS_S_NR - 1;
 		atomic_inc(&(lstats->latency_stats_s[idx]));
 	}
 }
