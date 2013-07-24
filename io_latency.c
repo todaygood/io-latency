@@ -14,13 +14,41 @@
 #define HOTFIX_PEEK_REQUEST	0
 #define HOTFIX_END_BIDI_REQUEST	1
 
-#define HASH_MAX_REQUEST_QUEUE	100
-#define HASH_MAX_REQUESTS	10000
+#define MAX_REQUEST_QUEUE	100
+#define MAX_REQUESTS		10000
+
+/* /proc/io-latency/sda/
+ * /proc/io-latency/sda/io_latency_s
+ * /proc/io-latency/sda/io_latency_ms
+ * /proc/io-latency/sda/io_latency_us
+ * /proc/io-latency/sda/io_latency_reset
+ */
+#define NR_PROC_TYPE		5
 
 static struct proc_dir_entry *proc_io_latency;
 static struct class *sd_disk_class;
 static struct hash_table *request_queue_table;
 static struct hash_table *request_table;
+
+struct proc_entry_name {
+	struct proc_dir_entry *entry;
+	struct proc_dir_entry *parent;
+	char name[64];
+};
+
+static struct proc_entry_name *dir_proc_list;
+static int nr_dir_proc;
+
+static void add_proc_node(const char *name, struct proc_dir_entry *node,
+			struct proc_dir_entry *parent)
+{
+	dir_proc_list[nr_dir_proc].entry = node;
+	dir_proc_list[nr_dir_proc].parent = parent;
+	strncpy(dir_proc_list[nr_dir_proc].name, name, 64);
+	nr_dir_proc++;
+}
+
+static void delete_procfs(void);
 
 static struct request* (*p_blk_peek_request)(struct request_queue *q);
 static bool (*p_blk_end_bidi_request)(struct request *req, int error,
@@ -215,21 +243,29 @@ static int create_procfs(void)
 	struct class_dev_iter iter;
 	struct device *dev;
 	struct scsi_disk *sd;
-	struct proc_dir_entry *proc_node;
+	struct proc_dir_entry *proc_node, *proc_dir;
 	struct latency_stats *lstats;
 
 	proc_io_latency = proc_mkdir("io-latency", NULL);
 	if (!proc_io_latency)
-		goto err1;
+		goto err;
+
+	dir_proc_list = kzalloc(sizeof(struct proc_entry_name) *
+			MAX_REQUEST_QUEUE * NR_PROC_TYPE, GFP_KERNEL);
+	if (!dir_proc_list)
+		goto err;
 
 	class_dev_iter_init(&iter, sd_disk_class, NULL, NULL);
 	while ((dev = class_dev_iter_next(&iter))) {
 		sd = container_of(dev, struct scsi_disk, dev);
-		proc_node = proc_mkdir(sd->disk->disk_name, proc_io_latency);
-		if (!proc_node)
-			printk("%s create fail\n", sd->disk->disk_name);
-		proc_create_data("io_latency_ms", 0, proc_node,
-				&proc_io_latency_fops, sd->device->request_queue);
+		proc_dir = proc_mkdir(sd->disk->disk_name, proc_io_latency);
+		if (!proc_dir)
+			goto err;
+		add_proc_node(sd->disk->disk_name, proc_dir, proc_io_latency);
+		proc_node = proc_create_data("io_latency_ms", 0, proc_dir,
+					&proc_io_latency_fops,
+					sd->device->request_queue);
+		add_proc_node("io_latency_ms", proc_node, proc_dir);
 		/*
 		sprintf(node_name, "%s/io_latency_reset", dev_name);
 		proc_create_data(node_name, 0, NULL, proc_io_latency_reset,
@@ -238,21 +274,50 @@ static int create_procfs(void)
 		hash_table_insert(request_queue_table,
 				(unsigned long)(sd->device->request_queue),
 				(unsigned long)lstats);
-		printk("queue:%p\n", sd->device->request_queue);
 	}
 	class_dev_iter_exit(&iter);
 
 	return 0;
-err1:
+err:
+	delete_procfs();
+	if (proc_io_latency)
+		remove_proc_entry("io-latency", NULL);
 	return -ENOMEM;
 }
 
-static void delete_procfs(void)
+int free_io_latency_stats(struct hash_node *nd)
 {
+	struct latency_stats *lstats = (struct latency_stats *)nd->value;
+	destroy_latency_stats(lstats);
+	nd->value = 0;
+	return 0;
+}
+
+void delete_procfs(void)
+{
+	struct proc_dir_entry *proc_node;
+	int i;
+
+	if (dir_proc_list) {
+		for (i = MAX_REQUEST_QUEUE * NR_PROC_TYPE - 1; i >= 0; i--) {
+			proc_node = dir_proc_list[i].entry;
+			if (proc_node) {
+				remove_proc_entry(dir_proc_list[i].name,
+						dir_proc_list[i].parent);
+				printk("remove %s %p\n", dir_proc_list[i].name,
+						dir_proc_list[i].parent);
+			}
+			memset(dir_proc_list + i, 0,
+					sizeof(struct proc_entry_name));
+		}
+	}
 	if (proc_io_latency) {
 		proc_io_latency = NULL;
 		remove_proc_entry("io-latency", NULL);
 	}
+	if (request_queue_table)
+		call_for_each_hash_node(request_queue_table,
+				free_io_latency_stats);
 }
 
 static int __init io_latency_init(void)
@@ -283,13 +348,13 @@ static int __init io_latency_init(void)
 	}
 
 	request_queue_table = create_hash_table("request_queue_table",
-					HASH_MAX_REQUEST_QUEUE);
+						MAX_REQUEST_QUEUE);
 	if (!request_queue_table) {
 		res = -ENOMEM;
 		goto err;
 	}
 
-	request_table = create_hash_table("request_table", HASH_MAX_REQUESTS);
+	request_table = create_hash_table("request_table", MAX_REQUESTS);
 	if (!request_table) {
 		res = -ENOMEM;
 		goto err;
@@ -313,6 +378,8 @@ err:
 static void __exit io_latency_exit(void)
 {
 	delete_procfs();
+	exit_latency_stats();
+	destroy_hash_table(request_table);
 	destroy_hash_table(request_queue_table);
 	ali_hotfix_unregister_list(io_latency_hotfix_list);
 }

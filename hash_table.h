@@ -7,6 +7,7 @@ struct hash_table {
 	struct hlist_head *tbl;
 	struct kmem_cache *cache;
 	int nr_ent;
+	int nr_node;
 };
 
 struct hash_node {
@@ -25,4 +26,8 @@ int hash_table_remove(struct hash_table *table, unsigned long key);
 struct hash_node *hash_table_find(struct hash_table *table, unsigned long key);
 int hash_table_find_and_remove(struct hash_table *table, unsigned long key,
 				unsigned long *value);
+
+void call_for_each_hash_node(struct hash_table *table,
+			int (*func)(struct hash_node *nd));
+
 #endif
