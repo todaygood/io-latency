@@ -362,7 +362,7 @@ static const struct file_operations proc_io_latency_s_fops = {
 static int show_io_latency_reset(char *page, char **start, off_t offset,
 					int count, int *eof, void *data)
 {
-	return snprintf(page, count, "0 %p", data);
+	return snprintf(page, count, "0\n");
 }
 
 static int store_io_latency_reset(struct file *file, const char __user *buffer,
@@ -511,7 +511,7 @@ static int __init io_latency_init(void)
 		goto err;
 	}
 
-	sd_disk_class = (struct class *)kallsyms_lookup_name("sd_disk_class");
+	sd_disk_class = (struct class *)ali_get_symbol_address("sd_disk_class");
 	if (!sd_disk_class) {
 		res = -EINVAL;
 		goto err;
