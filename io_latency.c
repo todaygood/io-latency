@@ -5,6 +5,7 @@
 #include <linux/blkdev.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/time.h>
 #include <scsi/scsi_device.h>
 
 #include "hotfixes.h"
@@ -118,11 +119,16 @@ static struct request* (*orig_blk_peek_request)(struct request_queue *q);
 static struct request* overwrite_blk_peek_request(struct request_queue *q)
 {
 	struct request *req;
+	ktime_t ts;
+
 	orig_blk_peek_request =
 		ali_hotfix_orig_func(&io_latency_hotfix_list[HOTFIX_PEEK_REQUEST]);
 	req = orig_blk_peek_request(q);
-	if (req)
-		hash_table_insert(request_table, (unsigned long)req, jiffies);
+	if (req) {
+		ts = ktime_get();
+		hash_table_insert(request_table, (unsigned long)req,
+					(unsigned long)ktime_to_us(ts));
+	}
 	return req;
 }
 
@@ -133,25 +139,29 @@ static bool overwrite_blk_end_bidi_request(struct request *req, int error,
 {
 	struct hash_node *nd;
 	struct latency_stats *lstats;
-	unsigned long stime;
+	unsigned long stime, now;
 	int res;
 
 	orig_blk_end_bidi_request =
 		ali_hotfix_orig_func(
 			&io_latency_hotfix_list[HOTFIX_END_BIDI_REQUEST]);
-	if (req) {
-		res = hash_table_find_and_remove(request_table,
-				(unsigned long)req, &stime);
-		if (!res) {
-			nd = hash_table_find(request_queue_table,
-					(unsigned long)(req->q));
-			if (nd) {
-				lstats = (struct latency_stats *)nd->value;
-				if (lstats)
-					update_latency_stats(lstats, stime);
+	if (!req)
+		goto out;
+
+	res = hash_table_find_and_remove(request_table,
+			(unsigned long)req, &stime);
+	if (!res) {
+		nd = hash_table_find(request_queue_table,
+				(unsigned long)(req->q));
+		if (nd) {
+			lstats = (struct latency_stats *)nd->value;
+			if (lstats) {
+				now = ktime_to_us(ktime_get());
+				update_latency_stats(lstats, stime, now);
 			}
 		}
 	}
+out:
 	return orig_blk_end_bidi_request(req, error, nr_bytes, bidi_bytes);
 }
 
@@ -172,6 +182,22 @@ static void *io_latency_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 
 static void io_latency_seq_stop(struct seq_file *seq, void *v)
 {
+}
+
+static void io_latency_us_show(struct seq_file *seq,
+				struct latency_stats *lstats)
+{
+	int slot_base = 0;
+	int i;
+
+	for (i = 0; i < IO_LATENCY_STATS_US_NR; i++) {
+		seq_printf(seq,
+			"%d-%d(us):%d\n",
+			slot_base,
+			slot_base + IO_LATENCY_STATS_US_GRAINSIZE - 1,
+			atomic_read(&(lstats->latency_stats_us[i])));
+		slot_base += IO_LATENCY_STATS_US_GRAINSIZE;
+	}
 }
 
 static void io_latency_ms_show(struct seq_file *seq,
@@ -206,6 +232,22 @@ static void io_latency_s_show(struct seq_file *seq,
 	}
 }
 
+static int io_latency_us_seq_show(struct seq_file *seq, void *v)
+{
+	struct request_queue *q = seq->private;
+	struct latency_stats *lstats;
+	struct hash_node *nd;
+
+	nd = hash_table_find(request_queue_table, (unsigned long)q);
+	if (!nd)
+		seq_puts(seq, "none");
+	else {
+		lstats = (struct latency_stats *)nd->value;
+		io_latency_us_show(seq, lstats);
+	}
+	return 0;
+}
+
 static int io_latency_ms_seq_show(struct seq_file *seq, void *v)
 {
 	struct request_queue *q = seq->private;
@@ -237,6 +279,33 @@ static int io_latency_s_seq_show(struct seq_file *seq, void *v)
 	}
 	return 0;
 }
+
+static const struct seq_operations io_latency_us_seq_ops = {
+	.start  = io_latency_seq_start,
+	.next   = io_latency_seq_next,
+	.stop   = io_latency_seq_stop,
+	.show   = io_latency_us_seq_show,
+};
+
+static int proc_io_latency_us_open(struct inode *inode, struct file *file)
+{
+	int res;
+	res = seq_open(file, &io_latency_us_seq_ops);
+	if (res == 0) {
+		struct seq_file *m = file->private_data;
+		m->private = PDE_DATA(inode);
+	}
+	return res;
+}
+
+static const struct file_operations proc_io_latency_us_fops = {
+	.owner		= THIS_MODULE,
+	.open		= proc_io_latency_us_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= seq_release,
+};
+
 
 static const struct seq_operations io_latency_ms_seq_ops = {
 	.start  = io_latency_seq_start,
@@ -311,6 +380,8 @@ static int store_io_latency_reset(struct file *file, const char __user *buffer,
 		lstats = (struct latency_stats *)nd->value;
 		if (lstats) {
 			for (i = 0; i < IO_LATENCY_STATS_MS_NR; i++)
+				atomic_set(&lstats->latency_stats_us[i], 0);
+			for (i = 0; i < IO_LATENCY_STATS_MS_NR; i++)
 				atomic_set(&lstats->latency_stats_ms[i], 0);
 			for (i = 0; i < IO_LATENCY_STATS_S_NR; i++)
 				atomic_set(&lstats->latency_stats_s[i], 0);
@@ -343,6 +414,13 @@ static int create_procfs(void)
 		if (!proc_dir)
 			goto err;
 		add_proc_node(sd->disk->disk_name, proc_dir, proc_io_latency);
+		/* create io_latency_us */
+		proc_node = proc_create_data("io_latency_us", S_IFREG, proc_dir,
+					&proc_io_latency_us_fops,
+					sd->device->request_queue);
+		if (!proc_node)
+			goto err;
+		add_proc_node("io_latency_us", proc_node, proc_dir);
 		/* create io_latency_ms */
 		proc_node = proc_create_data("io_latency_ms", S_IFREG, proc_dir,
 					&proc_io_latency_ms_fops,

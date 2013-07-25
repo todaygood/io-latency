@@ -8,11 +8,14 @@
 #define IO_LATENCY_STATS_S_GRAINSIZE	(1000/IO_LATENCY_STATS_S_NR)
 #define IO_LATENCY_STATS_MS_NR		100
 #define IO_LATENCY_STATS_MS_GRAINSIZE	(1000/IO_LATENCY_STATS_MS_NR)
+#define IO_LATENCY_STATS_US_NR		100
+#define IO_LATENCY_STATS_US_GRAINSIZE	(1000/IO_LATENCY_STATS_S_NR)
 
 struct latency_stats {
 	/* latency statistic buckets */
 	atomic_t latency_stats_s[IO_LATENCY_STATS_S_NR];
 	atomic_t latency_stats_ms[IO_LATENCY_STATS_MS_NR];
+	atomic_t latency_stats_us[IO_LATENCY_STATS_US_NR];
 };
 
 int init_latency_stats(void);
@@ -21,6 +24,7 @@ void exit_latency_stats(void);
 struct latency_stats *create_latency_stats(void);
 void destroy_latency_stats(struct latency_stats *lstats);
 
-void update_latency_stats(struct latency_stats *lstats, unsigned long stime);
+void update_latency_stats(struct latency_stats *lstats, unsigned long stime,
+			unsigned long now);
 
 #endif

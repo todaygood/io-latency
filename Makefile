@@ -11,8 +11,8 @@ clean:
 	make -C ${KERNEL_DEVEL_DIR} M=`pwd` clean
 
 unsetup:
-	rmmod io-latency
-	rmmod hotfixes
+	- rmmod io-latency
+	- rmmod hotfixes
 setup:
 	insmod hotfixes.ko
 	insmod io-latency.ko
