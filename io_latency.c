@@ -147,7 +147,8 @@ static bool overwrite_blk_end_bidi_request(struct request *req, int error,
 					(unsigned long)(req->q));
 			if (nd) {
 				lstats = (struct latency_stats *)nd->value;
-				update_latency_stats(lstats, stime);
+				if (lstats)
+					update_latency_stats(lstats, stime);
 			}
 		}
 	}
@@ -173,56 +174,81 @@ static void io_latency_seq_stop(struct seq_file *seq, void *v)
 {
 }
 
-static ssize_t io_latency_ms_show(struct latency_stats *lstats, char *buf)
+static void io_latency_ms_show(struct seq_file *seq,
+				struct latency_stats *lstats)
 {
 	int slot_base = 0;
-	int i, nr, ptr;
+	int i;
 
-	for (ptr = 0, i = 0; i < IO_LATENCY_STATS_MS_NR; i++) {
-		nr = sprintf(buf + ptr,
+	for (i = 0; i < IO_LATENCY_STATS_MS_NR; i++) {
+		seq_printf(seq,
 			"%d-%d(ms):%d\n",
 			slot_base,
 			slot_base + IO_LATENCY_STATS_MS_GRAINSIZE - 1,
 			atomic_read(&(lstats->latency_stats_ms[i])));
-		if (nr < 0)
-			break;
-
 		slot_base += IO_LATENCY_STATS_MS_GRAINSIZE;
-		ptr += nr;
 	}
-
-	return strlen(buf);
 }
 
-static int io_latency_seq_show(struct seq_file *seq, void *v)
+static void io_latency_s_show(struct seq_file *seq,
+				struct latency_stats *lstats)
+{
+	int slot_base = 0;
+	int i;
+
+	for (i = 0; i < IO_LATENCY_STATS_S_NR; i++) {
+		seq_printf(seq,
+			"%d-%d(s):%d\n",
+			slot_base,
+			slot_base + IO_LATENCY_STATS_S_GRAINSIZE - 1,
+			atomic_read(&(lstats->latency_stats_s[i])));
+		slot_base += IO_LATENCY_STATS_S_GRAINSIZE;
+	}
+}
+
+static int io_latency_ms_seq_show(struct seq_file *seq, void *v)
 {
 	struct request_queue *q = seq->private;
 	struct latency_stats *lstats;
 	struct hash_node *nd;
-	static char buf[4096];
 
 	nd = hash_table_find(request_queue_table, (unsigned long)q);
 	if (!nd)
 		seq_puts(seq, "none");
 	else {
 		lstats = (struct latency_stats *)nd->value;
-		io_latency_ms_show(lstats, buf);
-		seq_puts(seq, buf);
+		io_latency_ms_show(seq, lstats);
 	}
 	return 0;
 }
 
-static const struct seq_operations io_latency_seq_ops = {
+static int io_latency_s_seq_show(struct seq_file *seq, void *v)
+{
+	struct request_queue *q = seq->private;
+	struct latency_stats *lstats;
+	struct hash_node *nd;
+
+	nd = hash_table_find(request_queue_table, (unsigned long)q);
+	if (!nd)
+		seq_puts(seq, "none");
+	else {
+		lstats = (struct latency_stats *)nd->value;
+		io_latency_s_show(seq, lstats);
+	}
+	return 0;
+}
+
+static const struct seq_operations io_latency_ms_seq_ops = {
 	.start  = io_latency_seq_start,
 	.next   = io_latency_seq_next,
 	.stop   = io_latency_seq_stop,
-	.show   = io_latency_seq_show,
+	.show   = io_latency_ms_seq_show,
 };
 
-static int proc_io_latency_open(struct inode *inode, struct file *file)
+static int proc_io_latency_ms_open(struct inode *inode, struct file *file)
 {
 	int res;
-	res = seq_open(file, &io_latency_seq_ops);
+	res = seq_open(file, &io_latency_ms_seq_ops);
 	if (res == 0) {
 		struct seq_file *m = file->private_data;
 		m->private = PDE_DATA(inode);
@@ -230,13 +256,68 @@ static int proc_io_latency_open(struct inode *inode, struct file *file)
 	return res;
 }
 
-static const struct file_operations proc_io_latency_fops = {
+static const struct file_operations proc_io_latency_ms_fops = {
 	.owner		= THIS_MODULE,
-	.open		= proc_io_latency_open,
+	.open		= proc_io_latency_ms_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
 	.release	= seq_release,
 };
+
+static const struct seq_operations io_latency_s_seq_ops = {
+	.start  = io_latency_seq_start,
+	.next   = io_latency_seq_next,
+	.stop   = io_latency_seq_stop,
+	.show   = io_latency_s_seq_show,
+};
+
+static int proc_io_latency_s_open(struct inode *inode, struct file *file)
+{
+	int res;
+	res = seq_open(file, &io_latency_s_seq_ops);
+	if (res == 0) {
+		struct seq_file *m = file->private_data;
+		m->private = PDE_DATA(inode);
+	}
+	return res;
+}
+
+static const struct file_operations proc_io_latency_s_fops = {
+	.owner		= THIS_MODULE,
+	.open		= proc_io_latency_s_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= seq_release,
+};
+
+static int show_io_latency_reset(char *page, char **start, off_t offset,
+					int count, int *eof, void *data)
+{
+	return snprintf(page, count, "0 %p", data);
+}
+
+static int store_io_latency_reset(struct file *file, const char __user *buffer,
+					unsigned long count, void *data)
+{
+	struct hash_node *nd;
+	struct latency_stats *lstats;
+	int i;
+
+	if (count <= 0)
+		return count;
+
+	nd = hash_table_find(request_queue_table, (unsigned long)data);
+	if (nd) {
+		lstats = (struct latency_stats *)nd->value;
+		if (lstats) {
+			for (i = 0; i < IO_LATENCY_STATS_MS_NR; i++)
+				atomic_set(&lstats->latency_stats_ms[i], 0);
+			for (i = 0; i < IO_LATENCY_STATS_S_NR; i++)
+				atomic_set(&lstats->latency_stats_s[i], 0);
+		}
+	}
+	return count;
+}
 
 static int create_procfs(void)
 {
@@ -262,16 +343,30 @@ static int create_procfs(void)
 		if (!proc_dir)
 			goto err;
 		add_proc_node(sd->disk->disk_name, proc_dir, proc_io_latency);
-		proc_node = proc_create_data("io_latency_ms", 0, proc_dir,
-					&proc_io_latency_fops,
+		/* create io_latency_ms */
+		proc_node = proc_create_data("io_latency_ms", S_IFREG, proc_dir,
+					&proc_io_latency_ms_fops,
 					sd->device->request_queue);
 		if (!proc_node)
 			goto err;
 		add_proc_node("io_latency_ms", proc_node, proc_dir);
-		/*
-		sprintf(node_name, "%s/io_latency_reset", dev_name);
-		proc_create_data(node_name, 0, NULL, proc_io_latency_reset,
-				sd->device->request_queue);*/
+		/* create io_latency_s */
+		proc_node = proc_create_data("io_latency_s", S_IFREG, proc_dir,
+					&proc_io_latency_s_fops,
+					sd->device->request_queue);
+		if (!proc_node)
+			goto err;
+		add_proc_node("io_latency_s", proc_node, proc_dir);
+		/* create io_latency_reset */
+		proc_node = proc_create_data("io_latency_reset", S_IFREG,
+					proc_dir, NULL,
+					sd->device->request_queue);
+		if (!proc_node)
+			goto err;
+		proc_node->read_proc = show_io_latency_reset;
+		proc_node->write_proc = store_io_latency_reset;
+		add_proc_node("io_latency_reset", proc_node, proc_dir);
+
 		lstats = create_latency_stats();
 		if (!lstats)
 			goto err;
