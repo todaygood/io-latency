@@ -55,10 +55,8 @@ int ali_get_symbol_address_list(struct ali_sym_addr *list, int *failed)
 	while (1) {
 		if (!list[i].name)
 			return 0;
-		printk("%d\n", i);
 		*list[i].ptr = ali_get_symbol_address(list[i].name);
 		if (NULL == *list[i].ptr) {
-			printk("%s\n", list[i].name);
 			if (failed)
 				*failed = i;
 			return -EINVAL;

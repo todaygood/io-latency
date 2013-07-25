@@ -53,7 +53,6 @@ void destroy_hash_table(struct hash_table *table)
 	struct hash_node *nd;
 	int i;
 
-	printk("before nr_node: %d\n", table->nr_node);
 	for (i = 0; i < table->nr_ent; i++) {
 		hp = table->tbl + i;
 		hlist_for_each_entry_safe(nd, hn, tmp, hp, node) {
@@ -62,10 +61,8 @@ void destroy_hash_table(struct hash_table *table)
 			table->nr_node--;
 		}
 	}
-	if (table->cache) {
+	if (table->cache)
 		kmem_cache_destroy(table->cache);
-		printk("nr_node: %d\n", table->nr_node);
-	}
 	kfree(table->tbl);
 	kfree(table);
 }
@@ -89,7 +86,6 @@ int hash_table_insert(struct hash_table *table, unsigned long key,
 	nd->value = value;
 	hlist_add_head(&nd->node, hp);
 	table->nr_node++;
-	printk("insert %lu\n", key);
 	return 0;
 }
 

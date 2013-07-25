@@ -265,12 +265,16 @@ static int create_procfs(void)
 		proc_node = proc_create_data("io_latency_ms", 0, proc_dir,
 					&proc_io_latency_fops,
 					sd->device->request_queue);
+		if (!proc_node)
+			goto err;
 		add_proc_node("io_latency_ms", proc_node, proc_dir);
 		/*
 		sprintf(node_name, "%s/io_latency_reset", dev_name);
 		proc_create_data(node_name, 0, NULL, proc_io_latency_reset,
 				sd->device->request_queue);*/
 		lstats = create_latency_stats();
+		if (!lstats)
+			goto err;
 		hash_table_insert(request_queue_table,
 				(unsigned long)(sd->device->request_queue),
 				(unsigned long)lstats);
@@ -280,40 +284,38 @@ static int create_procfs(void)
 	return 0;
 err:
 	delete_procfs();
-	if (proc_io_latency)
-		remove_proc_entry("io-latency", NULL);
 	return -ENOMEM;
 }
 
-int free_io_latency_stats(struct hash_node *nd)
+static int free_io_latency_stats(struct hash_node *nd)
 {
-	struct latency_stats *lstats = (struct latency_stats *)nd->value;
-	destroy_latency_stats(lstats);
+	struct latency_stats *lstats = (struct latency_stats *)(nd->value);
+	if (lstats)
+		destroy_latency_stats(lstats);
 	nd->value = 0;
 	return 0;
 }
 
-void delete_procfs(void)
+static void delete_procfs(void)
 {
 	struct proc_dir_entry *proc_node;
 	int i;
 
 	if (dir_proc_list) {
-		for (i = MAX_REQUEST_QUEUE * NR_PROC_TYPE - 1; i >= 0; i--) {
+		for (i = nr_dir_proc - 1; i >= 0; i--) {
 			proc_node = dir_proc_list[i].entry;
 			if (proc_node) {
 				remove_proc_entry(dir_proc_list[i].name,
 						dir_proc_list[i].parent);
-				printk("remove %s %p\n", dir_proc_list[i].name,
-						dir_proc_list[i].parent);
 			}
-			memset(dir_proc_list + i, 0,
-					sizeof(struct proc_entry_name));
 		}
+		kfree(dir_proc_list);
+		dir_proc_list = NULL;
+		nr_dir_proc = 0;
 	}
 	if (proc_io_latency) {
-		proc_io_latency = NULL;
 		remove_proc_entry("io-latency", NULL);
+		proc_io_latency = NULL;
 	}
 	if (request_queue_table)
 		call_for_each_hash_node(request_queue_table,
@@ -324,20 +326,15 @@ static int __init io_latency_init(void)
 {
 	int res;
 
-	if (ali_get_symbol_address_list(io_latency_sym_addr_list, &res)) {
-		printk("Can't get address of %s\n",
-				io_latency_sym_addr_list[res].name);
-		return -EINVAL;
+	request_queue_table = create_hash_table("request_queue_table",
+						MAX_REQUEST_QUEUE);
+	if (!request_queue_table) {
+		res = -ENOMEM;
+		goto err;
 	}
-
-	res = ali_hotfix_register_list(io_latency_hotfix_list);
-	if (res)
-		return res;
-
-	if (!ali_hotfix_orig_func(
-			&io_latency_hotfix_list[HOTFIX_END_BIDI_REQUEST])) {
-		printk("Register fail\n");
-		res = -ENODEV;
+	request_table = create_hash_table("request_table", MAX_REQUESTS);
+	if (!request_table) {
+		res = -ENOMEM;
 		goto err;
 	}
 
@@ -347,41 +344,56 @@ static int __init io_latency_init(void)
 		goto err;
 	}
 
-	request_queue_table = create_hash_table("request_queue_table",
-						MAX_REQUEST_QUEUE);
-	if (!request_queue_table) {
-		res = -ENOMEM;
-		goto err;
-	}
-
-	request_table = create_hash_table("request_table", MAX_REQUESTS);
-	if (!request_table) {
-		res = -ENOMEM;
-		goto err;
-	}
-
 	res = init_latency_stats();
 	if (res)
 		goto err;
 
 	/* create /proc/io-latency/ */
 	res = create_procfs();
-	if (res)
+	if (res) {
+		exit_latency_stats();
 		goto err;
+	}
+
+	if (ali_get_symbol_address_list(io_latency_sym_addr_list, &res)) {
+		printk(KERN_ERR "Can't get address of %s\n",
+				io_latency_sym_addr_list[res].name);
+		res = -EINVAL;
+		goto hotfix_err;
+	}
+
+	res = ali_hotfix_register_list(io_latency_hotfix_list);
+	if (res)
+		goto hotfix_err;
+
+	if (!ali_hotfix_orig_func(
+			&io_latency_hotfix_list[HOTFIX_END_BIDI_REQUEST])) {
+		printk(KERN_ERR "Register fail\n");
+		ali_hotfix_unregister_list(io_latency_hotfix_list);
+		res = -ENODEV;
+		goto hotfix_err;
+	}
 
 	return 0;
+
+hotfix_err:
+	delete_procfs();
+	exit_latency_stats();
 err:
-	ali_hotfix_unregister_list(io_latency_hotfix_list);
+	if (request_table)
+		destroy_hash_table(request_table);
+	if (request_queue_table)
+		destroy_hash_table(request_queue_table);
 	return res;
 }
 
 static void __exit io_latency_exit(void)
 {
+	ali_hotfix_unregister_list(io_latency_hotfix_list);
 	delete_procfs();
 	exit_latency_stats();
 	destroy_hash_table(request_table);
 	destroy_hash_table(request_queue_table);
-	ali_hotfix_unregister_list(io_latency_hotfix_list);
 }
 
 module_init(io_latency_init)

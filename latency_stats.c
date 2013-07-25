@@ -40,8 +40,10 @@ int init_latency_stats(void)
 
 void exit_latency_stats(void)
 {
-	if (latency_stats_cache)
+	if (latency_stats_cache) {
 		kmem_cache_destroy(latency_stats_cache);
+		latency_stats_cache = NULL;
+	}
 }
 
 struct latency_stats *create_latency_stats(void)
