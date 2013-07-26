@@ -61,6 +61,8 @@ struct latency_stats *create_latency_stats(void)
 		atomic_set(&(lstats->latency_stats_s[r]), 0);
 	for (r = 0; r < IO_LATENCY_STATS_MS_NR; r++)
 		atomic_set(&(lstats->latency_stats_ms[r]), 0);
+	for (r = 0; r < IO_SIZE_STATS_NR; r++)
+		atomic_set(&(lstats->io_size_stats[r]), 0);
 
 	return lstats;
 }
@@ -103,5 +105,17 @@ void update_latency_stats(struct latency_stats *lstats, unsigned long stime,
 		if (idx > (IO_LATENCY_STATS_S_NR - 1))
 			idx = IO_LATENCY_STATS_S_NR - 1;
 		atomic_inc(&(lstats->latency_stats_s[idx]));
+	}
+}
+
+void update_io_size_stats(struct latency_stats *lstats, unsigned long size)
+{
+	int idx;
+
+	if (size < IO_SIZE_MAX) {
+		idx = size/IO_SIZE_STATS_GRAINSIZE;
+		if (idx > (IO_SIZE_STATS_NR - 1))
+			idx = IO_SIZE_STATS_NR - 1;
+		atomic_inc(&(lstats->io_size_stats[idx]));
 	}
 }

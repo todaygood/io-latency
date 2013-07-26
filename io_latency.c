@@ -158,11 +158,55 @@ static bool overwrite_blk_end_bidi_request(struct request *req, int error,
 			if (lstats) {
 				now = ktime_to_us(ktime_get());
 				update_latency_stats(lstats, stime, now);
+				update_io_size_stats(lstats, blk_rq_bytes(req));
 			}
 		}
 	}
 out:
 	return orig_blk_end_bidi_request(req, error, nr_bytes, bidi_bytes);
+}
+
+#define PROC_FOPS(_name) 						\
+static int _name##_seq_show(struct seq_file *seq, void *v)		\
+{									\
+	struct request_queue *q = seq->private;				\
+	struct latency_stats *lstats;					\
+	struct hash_node *nd;						\
+									\
+	nd = hash_table_find(request_queue_table, (unsigned long)q);	\
+	if (!nd)							\
+		seq_puts(seq, "none");					\
+	else {								\
+		lstats = (struct latency_stats *)nd->value;		\
+		_name##_show(seq, lstats);				\
+	}								\
+	return 0;							\
+}									\
+									\
+static const struct seq_operations _name##_seq_ops = {			\
+	.start  = io_latency_seq_start,					\
+	.next   = io_latency_seq_next,					\
+	.stop   = io_latency_seq_stop,					\
+	.show   = _name##_seq_show,					\
+};									\
+									\
+static int proc_##_name##_open(struct inode *inode, struct file *file)	\
+{									\
+	int res;							\
+	res = seq_open(file, &_name##_seq_ops);				\
+	if (res == 0) {							\
+		struct seq_file *m = file->private_data;		\
+		m->private = PDE_DATA(inode);				\
+	}								\
+	return res;							\
+}									\
+									\
+static const struct file_operations proc_##_name##_fops = {		\
+	.owner		= THIS_MODULE,					\
+	.open		= proc_##_name##_open,				\
+	.read		= seq_read,					\
+	.llseek		= seq_lseek,					\
+	.release	= seq_release,					\
 }
 
 static void *PDE_DATA(const struct inode *inode)
@@ -182,6 +226,23 @@ static void *io_latency_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 
 static void io_latency_seq_stop(struct seq_file *seq, void *v)
 {
+}
+
+#define KB (1024)
+static void io_size_show(struct seq_file *seq,
+				struct latency_stats *lstats)
+{
+	int slot_base = 0;
+	int i;
+
+	for (i = 0; i < IO_SIZE_STATS_NR; i++) {
+		seq_printf(seq,
+			"%d-%d(KB):%d\n",
+			(slot_base / KB),
+			(slot_base + IO_SIZE_STATS_GRAINSIZE - 1) / KB,
+			atomic_read(&(lstats->io_size_stats[i])));
+		slot_base += IO_SIZE_STATS_GRAINSIZE;
+	}
 }
 
 static void io_latency_us_show(struct seq_file *seq,
@@ -232,132 +293,10 @@ static void io_latency_s_show(struct seq_file *seq,
 	}
 }
 
-static int io_latency_us_seq_show(struct seq_file *seq, void *v)
-{
-	struct request_queue *q = seq->private;
-	struct latency_stats *lstats;
-	struct hash_node *nd;
-
-	nd = hash_table_find(request_queue_table, (unsigned long)q);
-	if (!nd)
-		seq_puts(seq, "none");
-	else {
-		lstats = (struct latency_stats *)nd->value;
-		io_latency_us_show(seq, lstats);
-	}
-	return 0;
-}
-
-static int io_latency_ms_seq_show(struct seq_file *seq, void *v)
-{
-	struct request_queue *q = seq->private;
-	struct latency_stats *lstats;
-	struct hash_node *nd;
-
-	nd = hash_table_find(request_queue_table, (unsigned long)q);
-	if (!nd)
-		seq_puts(seq, "none");
-	else {
-		lstats = (struct latency_stats *)nd->value;
-		io_latency_ms_show(seq, lstats);
-	}
-	return 0;
-}
-
-static int io_latency_s_seq_show(struct seq_file *seq, void *v)
-{
-	struct request_queue *q = seq->private;
-	struct latency_stats *lstats;
-	struct hash_node *nd;
-
-	nd = hash_table_find(request_queue_table, (unsigned long)q);
-	if (!nd)
-		seq_puts(seq, "none");
-	else {
-		lstats = (struct latency_stats *)nd->value;
-		io_latency_s_show(seq, lstats);
-	}
-	return 0;
-}
-
-static const struct seq_operations io_latency_us_seq_ops = {
-	.start  = io_latency_seq_start,
-	.next   = io_latency_seq_next,
-	.stop   = io_latency_seq_stop,
-	.show   = io_latency_us_seq_show,
-};
-
-static int proc_io_latency_us_open(struct inode *inode, struct file *file)
-{
-	int res;
-	res = seq_open(file, &io_latency_us_seq_ops);
-	if (res == 0) {
-		struct seq_file *m = file->private_data;
-		m->private = PDE_DATA(inode);
-	}
-	return res;
-}
-
-static const struct file_operations proc_io_latency_us_fops = {
-	.owner		= THIS_MODULE,
-	.open		= proc_io_latency_us_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= seq_release,
-};
-
-
-static const struct seq_operations io_latency_ms_seq_ops = {
-	.start  = io_latency_seq_start,
-	.next   = io_latency_seq_next,
-	.stop   = io_latency_seq_stop,
-	.show   = io_latency_ms_seq_show,
-};
-
-static int proc_io_latency_ms_open(struct inode *inode, struct file *file)
-{
-	int res;
-	res = seq_open(file, &io_latency_ms_seq_ops);
-	if (res == 0) {
-		struct seq_file *m = file->private_data;
-		m->private = PDE_DATA(inode);
-	}
-	return res;
-}
-
-static const struct file_operations proc_io_latency_ms_fops = {
-	.owner		= THIS_MODULE,
-	.open		= proc_io_latency_ms_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= seq_release,
-};
-
-static const struct seq_operations io_latency_s_seq_ops = {
-	.start  = io_latency_seq_start,
-	.next   = io_latency_seq_next,
-	.stop   = io_latency_seq_stop,
-	.show   = io_latency_s_seq_show,
-};
-
-static int proc_io_latency_s_open(struct inode *inode, struct file *file)
-{
-	int res;
-	res = seq_open(file, &io_latency_s_seq_ops);
-	if (res == 0) {
-		struct seq_file *m = file->private_data;
-		m->private = PDE_DATA(inode);
-	}
-	return res;
-}
-
-static const struct file_operations proc_io_latency_s_fops = {
-	.owner		= THIS_MODULE,
-	.open		= proc_io_latency_s_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= seq_release,
-};
+PROC_FOPS(io_size);
+PROC_FOPS(io_latency_us);
+PROC_FOPS(io_latency_ms);
+PROC_FOPS(io_latency_s);
 
 static int show_io_latency_reset(char *page, char **start, off_t offset,
 					int count, int *eof, void *data)
@@ -385,6 +324,8 @@ static int store_io_latency_reset(struct file *file, const char __user *buffer,
 				atomic_set(&lstats->latency_stats_ms[i], 0);
 			for (i = 0; i < IO_LATENCY_STATS_S_NR; i++)
 				atomic_set(&lstats->latency_stats_s[i], 0);
+			for (i = 0; i < IO_SIZE_STATS_NR; i++)
+				atomic_set(&lstats->io_size_stats[i], 0);
 		}
 	}
 	return count;
@@ -435,6 +376,13 @@ static int create_procfs(void)
 		if (!proc_node)
 			goto err;
 		add_proc_node("io_latency_s", proc_node, proc_dir);
+		/* create io_size */
+		proc_node = proc_create_data("io_size", S_IFREG, proc_dir,
+					&proc_io_size_fops,
+					sd->device->request_queue);
+		if (!proc_node)
+			goto err;
+		add_proc_node("io_size", proc_node, proc_dir);
 		/* create io_latency_reset */
 		proc_node = proc_create_data("io_latency_reset", S_IFREG,
 					proc_dir, NULL,
@@ -572,5 +520,5 @@ static void __exit io_latency_exit(void)
 module_init(io_latency_init)
 module_exit(io_latency_exit)
 MODULE_AUTHOR("Robin Dong <sanbai@taobao.com>");
-MODULE_DESCRIPTION("Collect statistics about io-latency");
+MODULE_DESCRIPTION("Collect statistics about disk io");
 MODULE_LICENSE("GPL");
