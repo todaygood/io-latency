@@ -20,6 +20,10 @@ struct latency_stats {
 	atomic_t latency_stats_s[IO_LATENCY_STATS_S_NR];
 	atomic_t latency_stats_ms[IO_LATENCY_STATS_MS_NR];
 	atomic_t latency_stats_us[IO_LATENCY_STATS_US_NR];
+	/* latency statistic for block-layer buckets */
+	atomic_t soft_latency_stats_s[IO_LATENCY_STATS_S_NR];
+	atomic_t soft_latency_stats_ms[IO_LATENCY_STATS_MS_NR];
+	atomic_t soft_latency_stats_us[IO_LATENCY_STATS_US_NR];
 	/* io size statistic buckets */
 	atomic_t io_size_stats[IO_SIZE_STATS_NR];
 };
@@ -31,7 +35,7 @@ struct latency_stats *create_latency_stats(void);
 void destroy_latency_stats(struct latency_stats *lstats);
 
 void update_latency_stats(struct latency_stats *lstats, unsigned long stime,
-			unsigned long now);
+			unsigned long now, int soft);
 void update_io_size_stats(struct latency_stats *lstats, unsigned long size);
 
 #endif

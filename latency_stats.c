@@ -74,7 +74,7 @@ void destroy_latency_stats(struct latency_stats *lstats)
 }
 
 void update_latency_stats(struct latency_stats *lstats, unsigned long stime,
-			unsigned long now)
+			unsigned long now, int soft)
 {
 	unsigned long latency;
 	int idx;
@@ -92,19 +92,28 @@ void update_latency_stats(struct latency_stats *lstats, unsigned long stime,
 		idx = latency/IO_LATENCY_STATS_US_GRAINSIZE;
 		if (idx > (IO_LATENCY_STATS_US_NR - 1))
 			idx = IO_LATENCY_STATS_US_NR - 1;
-		atomic_inc(&(lstats->latency_stats_us[idx]));
+		if (soft)
+			atomic_inc(&(lstats->soft_latency_stats_us[idx]));
+		else
+			atomic_inc(&(lstats->latency_stats_us[idx]));
 	} else if (latency < 1000000) {
 		/* milliseconds */
 		idx = us2msecs(latency)/IO_LATENCY_STATS_MS_GRAINSIZE;
 		if (idx > (IO_LATENCY_STATS_MS_NR - 1))
 			idx = IO_LATENCY_STATS_MS_NR - 1;
-		atomic_inc(&(lstats->latency_stats_ms[idx]));
+		if (soft)
+			atomic_inc(&(lstats->soft_latency_stats_ms[idx]));
+		else
+			atomic_inc(&(lstats->latency_stats_ms[idx]));
 	} else {
 		/* seconds */
 		idx = us2secs(latency)/IO_LATENCY_STATS_S_GRAINSIZE;
 		if (idx > (IO_LATENCY_STATS_S_NR - 1))
 			idx = IO_LATENCY_STATS_S_NR - 1;
-		atomic_inc(&(lstats->latency_stats_s[idx]));
+		if (soft)
+			atomic_inc(&(lstats->soft_latency_stats_s[idx]));
+		else
+			atomic_inc(&(lstats->latency_stats_s[idx]));
 	}
 }
 
