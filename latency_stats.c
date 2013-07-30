@@ -57,10 +57,18 @@ struct latency_stats *create_latency_stats(void)
 		return (struct latency_stats *)-ENOMEM;
 
 	/* initial latency stats buckets */
-	for (r = 0; r < IO_LATENCY_STATS_S_NR; r++)
+	for (r = 0; r < IO_LATENCY_STATS_S_NR; r++) {
 		atomic_set(&(lstats->latency_stats_s[r]), 0);
-	for (r = 0; r < IO_LATENCY_STATS_MS_NR; r++)
+		atomic_set(&(lstats->soft_latency_stats_s[r]), 0);
+	}
+	for (r = 0; r < IO_LATENCY_STATS_MS_NR; r++) {
 		atomic_set(&(lstats->latency_stats_ms[r]), 0);
+		atomic_set(&(lstats->soft_latency_stats_ms[r]), 0);
+	}
+	for (r = 0; r < IO_LATENCY_STATS_US_NR; r++) {
+		atomic_set(&(lstats->latency_stats_us[r]), 0);
+		atomic_set(&(lstats->soft_latency_stats_us[r]), 0);
+	}
 	for (r = 0; r < IO_SIZE_STATS_NR; r++)
 		atomic_set(&(lstats->io_size_stats[r]), 0);
 
