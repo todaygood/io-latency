@@ -14,7 +14,7 @@
 
 #define HOTFIX_GET_REQUEST	0
 #define HOTFIX_PEEK_REQUEST	1
-#define HOTFIX_END_BIDI_REQUEST	2
+#define HOTFIX_FINISH_REQUEST	2
 
 #define MAX_REQUEST_QUEUE	100
 #define MAX_REQUESTS		10000
@@ -58,8 +58,7 @@ static void delete_procfs(void);
 static struct request* (*p_get_request_wait)(struct request_queue *q,
 		int rw_flags, struct bio *bio);
 static struct request* (*p_blk_peek_request)(struct request_queue *q);
-static bool (*p_blk_end_bidi_request)(struct request *req, int error,
-		unsigned int nr_bytes, unsigned int bidi_bytes);
+static void (*p_blk_finish_request)(struct request *req, int error);
 
 struct scsi_disk {
 	struct scsi_driver *driver;	/* always &sd_template */
@@ -99,14 +98,13 @@ struct scsi_disk {
 static struct ali_sym_addr io_latency_sym_addr_list[] = {
 	ALI_DEFINE_SYM_ADDR(get_request_wait),
 	ALI_DEFINE_SYM_ADDR(blk_peek_request),
-	ALI_DEFINE_SYM_ADDR(blk_end_bidi_request),
+	ALI_DEFINE_SYM_ADDR(blk_finish_request),
 	{},
 };
 static struct request *overwrite_get_request_wait(struct request_queue *q,
 		int rw_flags, struct bio *bio);
 static struct request *overwrite_blk_peek_request(struct request_queue *q);
-static bool overwrite_blk_end_bidi_request(struct request *req, int error,
-		unsigned int nr_bytes, unsigned int bidi_bytes);
+static void overwrite_blk_finish_request(struct request *req, int error);
 
 static struct ali_hotfix_desc io_latency_hotfix_list[] = {
 
@@ -120,10 +118,10 @@ static struct ali_hotfix_desc io_latency_hotfix_list[] = {
 			"blk_peek_request", \
 			overwrite_blk_peek_request),
 
-	[HOTFIX_END_BIDI_REQUEST] = ALI_DEFINE_HOTFIX( \
-			"block: blk_end_bidi_request", \
-			"blk_end_bidi_request", \
-			overwrite_blk_end_bidi_request),
+	[HOTFIX_FINISH_REQUEST] = ALI_DEFINE_HOTFIX( \
+			"block: blk_finish_request", \
+			"blk_finish_request", \
+			overwrite_blk_finish_request),
 
 	{},
 };
@@ -172,25 +170,24 @@ static struct request *overwrite_blk_peek_request(struct request_queue *q)
 				stime = req_nd->value;
 				req_nd->value = now;
 				update_latency_stats(lstats, stime, now, 1);
+				update_io_size_stats(lstats, blk_rq_bytes(req));
 			}
 		}
 	}
 	return req;
 }
 
-static bool (*orig_blk_end_bidi_request)(struct request *req, int error,
-		unsigned int nr_bytes, unsigned int bidi_bytes);
-static bool overwrite_blk_end_bidi_request(struct request *req, int error,
-		unsigned int nr_bytes, unsigned int bidi_bytes)
+static void (*orig_blk_finish_request)(struct request *req, int error);
+static void overwrite_blk_finish_request(struct request *req, int error)
 {
 	struct hash_node *nd;
 	struct latency_stats *lstats;
 	unsigned long stime, now;
 	int res;
 
-	orig_blk_end_bidi_request =
+	orig_blk_finish_request =
 		ali_hotfix_orig_func(
-			&io_latency_hotfix_list[HOTFIX_END_BIDI_REQUEST]);
+			&io_latency_hotfix_list[HOTFIX_FINISH_REQUEST]);
 	if (!req)
 		goto out;
 
@@ -204,12 +201,11 @@ static bool overwrite_blk_end_bidi_request(struct request *req, int error,
 			if (lstats) {
 				now = ktime_to_us(ktime_get());
 				update_latency_stats(lstats, stime, now, 0);
-				update_io_size_stats(lstats, blk_rq_bytes(req));
 			}
 		}
 	}
 out:
-	return orig_blk_end_bidi_request(req, error, nr_bytes, bidi_bytes);
+	orig_blk_finish_request(req, error);
 }
 
 #define PROC_SHOW(_name, _unit, _nr, _grain, _member)			\
@@ -550,7 +546,7 @@ static int __init io_latency_init(void)
 		goto hotfix_err;
 
 	if (!ali_hotfix_orig_func(
-			&io_latency_hotfix_list[HOTFIX_END_BIDI_REQUEST])) {
+			&io_latency_hotfix_list[HOTFIX_FINISH_REQUEST])) {
 		printk(KERN_ERR "Register fail\n");
 		ali_hotfix_unregister_list(io_latency_hotfix_list);
 		res = -ENODEV;
