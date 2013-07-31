@@ -7,13 +7,14 @@
 #include <linux/seq_file.h>
 #include <linux/time.h>
 #include <scsi/scsi_device.h>
+#include <scsi/scsi_cmnd.h>
 
 #include "hotfixes.h"
 #include "hash_table.h"
 #include "latency_stats.h"
 
 #define HOTFIX_GET_REQUEST	0
-#define HOTFIX_PEEK_REQUEST	1
+#define HOTFIX_SCSI_DISPATCH	1
 #define HOTFIX_FINISH_REQUEST	2
 
 #define MAX_REQUEST_QUEUE	100
@@ -63,7 +64,7 @@ static struct kmem_cache *request_table_aux_cache;
 
 static struct request* (*p_get_request_wait)(struct request_queue *q,
 		int rw_flags, struct bio *bio);
-static struct request* (*p_blk_peek_request)(struct request_queue *q);
+static struct request* (*p_scsi_dispatch_cmd)(struct request_queue *q);
 static void (*p_blk_finish_request)(struct request *req, int error);
 
 struct scsi_disk {
@@ -103,13 +104,13 @@ struct scsi_disk {
 
 static struct ali_sym_addr io_latency_sym_addr_list[] = {
 	ALI_DEFINE_SYM_ADDR(get_request_wait),
-	ALI_DEFINE_SYM_ADDR(blk_peek_request),
+	ALI_DEFINE_SYM_ADDR(scsi_dispatch_cmd),
 	ALI_DEFINE_SYM_ADDR(blk_finish_request),
 	{},
 };
 static struct request *overwrite_get_request_wait(struct request_queue *q,
 		int rw_flags, struct bio *bio);
-static struct request *overwrite_blk_peek_request(struct request_queue *q);
+static int overwrite_scsi_dispatch_cmd(struct scsi_cmnd *cmd);
 static void overwrite_blk_finish_request(struct request *req, int error);
 
 static struct ali_hotfix_desc io_latency_hotfix_list[] = {
@@ -119,10 +120,10 @@ static struct ali_hotfix_desc io_latency_hotfix_list[] = {
 			"get_request_wait", \
 			overwrite_get_request_wait),
 
-	[HOTFIX_PEEK_REQUEST] = ALI_DEFINE_HOTFIX( \
-			"block: blk_peek_request", \
-			"blk_peek_request", \
-			overwrite_blk_peek_request),
+	[HOTFIX_SCSI_DISPATCH] = ALI_DEFINE_HOTFIX( \
+			"block: scsi_dispatch_cmd", \
+			"scsi_dispatch_cmd", \
+			overwrite_scsi_dispatch_cmd),
 
 	[HOTFIX_FINISH_REQUEST] = ALI_DEFINE_HOTFIX( \
 			"block: blk_finish_request", \
@@ -165,17 +166,17 @@ out:
 	return req;
 }
 
-static struct request *(*orig_blk_peek_request)(struct request_queue *q);
-static struct request *overwrite_blk_peek_request(struct request_queue *q)
+static int (*orig_scsi_dispatch_cmd)(struct scsi_cmnd *cmd);
+static int overwrite_scsi_dispatch_cmd(struct scsi_cmnd *cmd)
 {
 	struct request *req;
 	struct hash_node *req_nd, *queue_nd;
 	struct request_queue_aux *aux;
 	unsigned long stime, now;
 
-	orig_blk_peek_request = ali_hotfix_orig_func(
-			&io_latency_hotfix_list[HOTFIX_PEEK_REQUEST]);
-	req = orig_blk_peek_request(q);
+	orig_scsi_dispatch_cmd = ali_hotfix_orig_func(
+			&io_latency_hotfix_list[HOTFIX_SCSI_DISPATCH]);
+	req = cmd->request;
 	if (!req || !req->q)
 		goto out;
 
@@ -199,7 +200,7 @@ static struct request *overwrite_blk_peek_request(struct request_queue *q)
 	update_latency_stats(aux->lstats, stime, now, 1);
 	update_io_size_stats(aux->lstats, blk_rq_bytes(req));
 out:
-	return req;
+	return orig_scsi_dispatch_cmd(cmd);
 }
 
 static void (*orig_blk_finish_request)(struct request *req, int error);
