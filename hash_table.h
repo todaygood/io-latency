@@ -3,9 +3,12 @@
 
 #include <linux/slab.h>
 
+#define MAX_HASH_TABLE_NAME_LEN		64
+
 struct hash_table {
 	struct hlist_head *tbl;
 	struct kmem_cache *cache;
+	char name[MAX_HASH_TABLE_NAME_LEN];
 	int nr_ent;
 	int nr_node;
 };

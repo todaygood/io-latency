@@ -13,6 +13,6 @@ while [ 1 ]; do
 	cat /proc/io-latency/$DEV/io_latency_us
 	cat /proc/io-latency/$DEV/io_latency_ms
 	cat /proc/io-latency/$DEV/io_latency_s
-	echo "" > /proc/io-latency/$DEV/io_latency_reset
+	echo "" > /proc/io-latency/$DEV/io_stats_reset
 	make unsetup
 done

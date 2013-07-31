@@ -35,7 +35,8 @@ struct hash_table *create_hash_table(const char *name, int nr_ent)
 		return NULL;
 	}
 
-	table->cache = kmem_cache_create(name, sizeof(struct hash_node),
+	strncpy(table->name, name, MAX_HASH_TABLE_NAME_LEN);
+	table->cache = kmem_cache_create(table->name, sizeof(struct hash_node),
 					0, 0, NULL);
 	if (!table->cache) {
 		kfree(table->tbl);
