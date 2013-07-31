@@ -149,6 +149,9 @@ static struct request *overwrite_get_request_wait(struct request_queue *q,
 	if (!req || !req->q)
 		goto out;
 
+	if (!bio || bio->bi_size <= 0)
+		goto out;
+
 	queue_nd = hash_table_find(request_queue_table,
 						(unsigned long)req->q);
 	if (!queue_nd)
@@ -173,6 +176,7 @@ static int overwrite_scsi_dispatch_cmd(struct scsi_cmnd *cmd)
 	struct hash_node *req_nd, *queue_nd;
 	struct request_queue_aux *aux;
 	unsigned long stime, now;
+	int bytes;
 
 	orig_scsi_dispatch_cmd = ali_hotfix_orig_func(
 			&io_latency_hotfix_list[HOTFIX_SCSI_DISPATCH]);
@@ -189,6 +193,11 @@ static int overwrite_scsi_dispatch_cmd(struct scsi_cmnd *cmd)
 	if (!aux || !aux->hash_table || !aux->lstats)
 		goto out;
 
+	bytes = blk_rq_bytes(req);
+	if (bytes <= 0) {
+		hash_table_remove(aux->hash_table, (unsigned long)req);
+		goto out;
+	}
 	/* find request in request hash table */
 	req_nd = hash_table_find(aux->hash_table, (unsigned long)req);
 	if (!req_nd)
