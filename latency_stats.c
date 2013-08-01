@@ -1,3 +1,22 @@
+/*
+ * latency_stats.c
+ *
+ * informations for IO latency and size
+ *
+ * Copyright (C) 2013,  Coly Li <i@coly.li>
+ * 			Robin Dong <sanbai@taobao.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public
+ * License, version 2,  as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ */
+
 #include <asm-generic/div64.h>
 #include <linux/slab.h>
 #include <linux/clocksource.h>
