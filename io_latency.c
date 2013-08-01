@@ -21,6 +21,8 @@
 #define MAX_REQUESTS		10000
 
 /* /proc/io-latency/sda/
+ * /proc/io-latency/sda/enable_latency
+ * /proc/io-latency/sda/enable_soft_latency
  * /proc/io-latency/sda/io_latency_s
  * /proc/io-latency/sda/io_latency_ms
  * /proc/io-latency/sda/io_latency_us
@@ -29,7 +31,7 @@
  * /proc/io-latency/sda/soft_io_latency_us
  * /proc/io-latency/sda/io_latency_reset
  */
-#define NR_PROC_TYPE		8
+#define NR_PROC_TYPE		10
 
 static struct proc_dir_entry *proc_io_latency;
 static struct class *sd_disk_class;
@@ -59,6 +61,8 @@ static void delete_procfs(void);
 struct request_queue_aux {
 	struct latency_stats *lstats;
 	struct hash_table *hash_table;
+	short enable_latency;
+	short enable_soft_latency;
 };
 static struct kmem_cache *request_table_aux_cache;
 
@@ -161,6 +165,9 @@ static struct request *overwrite_get_request_wait(struct request_queue *q,
 	if (!aux || !aux->hash_table || !aux->lstats)
 		goto out;
 
+	if (!(aux->enable_latency) && !(aux->enable_soft_latency))
+		goto out;
+
 	/* insert request to hash table */
 	ts = ktime_get();
 	hash_table_insert(aux->hash_table, (unsigned long)req,
@@ -191,6 +198,9 @@ static int overwrite_scsi_dispatch_cmd(struct scsi_cmnd *cmd)
 
 	aux = (struct request_queue_aux *)(queue_nd->value);
 	if (!aux || !aux->hash_table || !aux->lstats)
+		goto out;
+
+	if (!(aux->enable_soft_latency))
 		goto out;
 
 	bytes = blk_rq_bytes(req);
@@ -233,6 +243,9 @@ static void overwrite_blk_finish_request(struct request *req, int error)
 
 	aux = (struct request_queue_aux *)(queue_nd->value);
 	if (!aux || !aux->hash_table || !aux->lstats)
+		goto out;
+
+	if (!(aux->enable_latency))
 		goto out;
 
 	/* find and remove request in request hash table */
@@ -365,6 +378,65 @@ PROC_FOPS(io_latency_us);
 PROC_FOPS(io_latency_ms);
 PROC_FOPS(io_latency_s);
 
+#define ENABLE_ATTR(_name)						\
+static int show_##_name(char *page, char **start, off_t offset,		\
+					int count, int *eof, void *data)\
+{									\
+	struct hash_node *nd;						\
+	struct request_queue_aux *aux;					\
+	int res = 0;							\
+									\
+	if (!data)							\
+		goto out;						\
+	nd = hash_table_find(request_queue_table, (unsigned long)data);	\
+	if (!nd)							\
+		goto out;						\
+	aux = (struct request_queue_aux *)nd->value;			\
+	if (!aux)							\
+		goto out;						\
+	if (aux->_name)							\
+		res = snprintf(page, count, "1\n");			\
+	else								\
+		res = snprintf(page, count, "0\n");			\
+out:									\
+	return res;							\
+}									\
+									\
+static int store_##_name(struct file *file, const char __user *buffer,	\
+					unsigned long count, void *data)\
+{									\
+	struct hash_node *nd;						\
+	struct request_queue_aux *aux;					\
+	char *page = NULL;						\
+									\
+	if (count <= 0 || count > PAGE_SIZE)				\
+		goto out;						\
+	if (!data)							\
+		goto out;						\
+	nd = hash_table_find(request_queue_table, (unsigned long)data);	\
+	if (!nd)							\
+		goto out;						\
+	aux = (struct request_queue_aux *)nd->value;			\
+	if (!aux)							\
+		goto out;						\
+	page = (char *)__get_free_page(GFP_KERNEL);			\
+	if (!page)							\
+		goto out;						\
+	if (copy_from_user(page, buffer, count))			\
+		goto out;						\
+	if (page[0] == '1')						\
+		aux->_name = 1;						\
+	else if (page[0] == '0')					\
+		aux->_name = 0;						\
+out:									\
+	if (page)							\
+		free_page((unsigned long)page);				\
+	return count;							\
+}
+
+ENABLE_ATTR(enable_latency);
+ENABLE_ATTR(enable_soft_latency);
+
 static int show_io_stats_reset(char *page, char **start, off_t offset,
 					int count, int *eof, void *data)
 {
@@ -492,6 +564,24 @@ static int create_procfs(void)
 		proc_node->read_proc = show_io_stats_reset;
 		proc_node->write_proc = store_io_stats_reset;
 		add_proc_node("io_stats_reset", proc_node, proc_dir);
+		/* create enable_latency */
+		proc_node = proc_create_data("enable_latency", S_IFREG,
+					proc_dir, NULL,
+					sd->device->request_queue);
+		if (!proc_node)
+			goto err;
+		proc_node->read_proc = show_enable_latency;
+		proc_node->write_proc = store_enable_latency;
+		add_proc_node("enable_latency", proc_node, proc_dir);
+		/* create enable_soft_latency */
+		proc_node = proc_create_data("enable_soft_latency", S_IFREG,
+					proc_dir, NULL,
+					sd->device->request_queue);
+		if (!proc_node)
+			goto err;
+		proc_node->read_proc = show_enable_soft_latency;
+		proc_node->write_proc = store_enable_soft_latency;
+		add_proc_node("enable_soft_latency", proc_node, proc_dir);
 
 		lstats = create_latency_stats();
 		if (!lstats)
@@ -511,6 +601,8 @@ static int create_procfs(void)
 		}
 		aux->lstats = lstats;
 		aux->hash_table = request_table;
+		aux->enable_latency = 1;
+		aux->enable_soft_latency = 1;
 		hash_table_insert(request_queue_table,
 				(unsigned long)(sd->device->request_queue),
 				(unsigned long)aux);
