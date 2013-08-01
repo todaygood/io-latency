@@ -17,8 +17,8 @@
 #define HOTFIX_SCSI_DISPATCH	1
 #define HOTFIX_FINISH_REQUEST	2
 
-#define MAX_REQUEST_QUEUE	100
-#define MAX_REQUESTS		10000
+#define MAX_REQUEST_QUEUE	97
+#define MAX_REQUESTS		9973
 
 /* /proc/io-latency/sda/
  * /proc/io-latency/sda/enable_latency
@@ -143,7 +143,7 @@ static struct request *overwrite_get_request_wait(struct request_queue *q,
 		int rw_flags, struct bio *bio)
 {
 	struct request *req;
-	struct hash_node *queue_nd;
+	struct hash_node *queue_nd, *req_nd;
 	struct request_queue_aux *aux;
 	ktime_t ts;
 
@@ -168,10 +168,14 @@ static struct request *overwrite_get_request_wait(struct request_queue *q,
 	if (!(aux->enable_latency) && !(aux->enable_soft_latency))
 		goto out;
 
-	/* insert request to hash table */
+	/* insert request to hash table if it does not exists */
 	ts = ktime_get();
-	hash_table_insert(aux->hash_table, (unsigned long)req,
-				(unsigned long)ktime_to_us(ts));
+	req_nd = hash_table_find(aux->hash_table, (unsigned long)req);
+	if (req_nd)
+		req_nd->value = ktime_to_us(ts);
+	else
+		hash_table_insert(aux->hash_table, (unsigned long)req,
+					(unsigned long)ktime_to_us(ts));
 out:
 	return req;
 }
@@ -225,10 +229,9 @@ out:
 static void (*orig_blk_finish_request)(struct request *req, int error);
 static void overwrite_blk_finish_request(struct request *req, int error)
 {
-	struct hash_node *queue_nd;
+	struct hash_node *queue_nd, *req_nd;
 	struct request_queue_aux *aux;
 	unsigned long stime, now;
-	int res;
 
 	orig_blk_finish_request =
 		ali_hotfix_orig_func(
@@ -248,14 +251,13 @@ static void overwrite_blk_finish_request(struct request *req, int error)
 	if (!(aux->enable_latency))
 		goto out;
 
-	/* find and remove request in request hash table */
-	res = hash_table_find_and_remove(aux->hash_table,
-					(unsigned long)req, &stime);
-	if (res)
-		goto out;
-
-	now = ktime_to_us(ktime_get());
-	update_latency_stats(aux->lstats, stime, now, 0);
+	/* find request in request hash table and update it's value */
+	req_nd = hash_table_find(aux->hash_table, (unsigned long)req);
+	if (req_nd) {
+		stime = req_nd->value;
+		now = ktime_to_us(ktime_get());
+		update_latency_stats(aux->lstats, stime, now, 0);
+	}
 out:
 	orig_blk_finish_request(req, error);
 }
