@@ -220,8 +220,8 @@ static int overwrite_scsi_dispatch_cmd(struct scsi_cmnd *cmd)
 	now = ktime_to_us(ktime_get());
 	stime = req_nd->value;
 	req_nd->value = now;
-	update_latency_stats(aux->lstats, stime, now, 1);
-	update_io_size_stats(aux->lstats, blk_rq_bytes(req));
+	update_latency_stats(aux->lstats, stime, now, 1, rq_data_dir(req));
+	update_io_size_stats(aux->lstats, blk_rq_bytes(req), rq_data_dir(req));
 out:
 	return orig_scsi_dispatch_cmd(cmd);
 }
@@ -253,11 +253,12 @@ static void overwrite_blk_finish_request(struct request *req, int error)
 
 	/* find request in request hash table and update it's value */
 	req_nd = hash_table_find(aux->hash_table, (unsigned long)req);
-	if (req_nd) {
-		stime = req_nd->value;
-		now = ktime_to_us(ktime_get());
-		update_latency_stats(aux->lstats, stime, now, 0);
-	}
+	if (!req_nd)
+		goto out;
+
+	stime = req_nd->value;
+	now = ktime_to_us(ktime_get());
+	update_latency_stats(aux->lstats, stime, now, 0, rq_data_dir(req));
 out:
 	orig_blk_finish_request(req, error);
 }
@@ -359,12 +360,59 @@ static void io_size_show(struct seq_file *seq,
 	}
 }
 
+static void io_read_size_show(struct seq_file *seq,
+				struct latency_stats *lstats)
+{
+	int slot_base = 0;
+	int i;
+
+	for (i = 0; i < IO_SIZE_STATS_NR; i++) {
+		seq_printf(seq,
+			"%d-%d(KB):%d\n",
+			(slot_base / KB),
+			(slot_base + IO_SIZE_STATS_GRAINSIZE - 1) / KB,
+			atomic_read(&(lstats->io_read_size_stats[i])));
+		slot_base += IO_SIZE_STATS_GRAINSIZE;
+	}
+}
+
+static void io_write_size_show(struct seq_file *seq,
+				struct latency_stats *lstats)
+{
+	int slot_base = 0;
+	int i;
+
+	for (i = 0; i < IO_SIZE_STATS_NR; i++) {
+		seq_printf(seq,
+			"%d-%d(KB):%d\n",
+			(slot_base / KB),
+			(slot_base + IO_SIZE_STATS_GRAINSIZE - 1) / KB,
+			atomic_read(&(lstats->io_write_size_stats[i])));
+		slot_base += IO_SIZE_STATS_GRAINSIZE;
+	}
+}
+
 PROC_SHOW(soft_io_latency_us, "us", IO_LATENCY_STATS_US_NR,
 		IO_LATENCY_STATS_US_GRAINSIZE, soft_latency_stats_us);
 PROC_SHOW(soft_io_latency_ms, "ms", IO_LATENCY_STATS_MS_NR,
 		IO_LATENCY_STATS_MS_GRAINSIZE, soft_latency_stats_ms);
 PROC_SHOW(soft_io_latency_s, "s", IO_LATENCY_STATS_S_NR,
 		IO_LATENCY_STATS_S_GRAINSIZE, soft_latency_stats_s);
+
+PROC_SHOW(soft_read_io_latency_us, "us", IO_LATENCY_STATS_US_NR,
+		IO_LATENCY_STATS_US_GRAINSIZE, soft_latency_read_stats_us);
+PROC_SHOW(soft_read_io_latency_ms, "ms", IO_LATENCY_STATS_MS_NR,
+		IO_LATENCY_STATS_MS_GRAINSIZE, soft_latency_read_stats_ms);
+PROC_SHOW(soft_read_io_latency_s, "s", IO_LATENCY_STATS_S_NR,
+		IO_LATENCY_STATS_S_GRAINSIZE, soft_latency_read_stats_s);
+
+PROC_SHOW(soft_write_io_latency_us, "us", IO_LATENCY_STATS_US_NR,
+		IO_LATENCY_STATS_US_GRAINSIZE, soft_latency_write_stats_us);
+PROC_SHOW(soft_write_io_latency_ms, "ms", IO_LATENCY_STATS_MS_NR,
+		IO_LATENCY_STATS_MS_GRAINSIZE, soft_latency_write_stats_ms);
+PROC_SHOW(soft_write_io_latency_s, "s", IO_LATENCY_STATS_S_NR,
+		IO_LATENCY_STATS_S_GRAINSIZE, soft_latency_write_stats_s);
+
 PROC_SHOW(io_latency_us, "us", IO_LATENCY_STATS_US_NR,
 		IO_LATENCY_STATS_US_GRAINSIZE, latency_stats_us);
 PROC_SHOW(io_latency_ms, "ms", IO_LATENCY_STATS_MS_NR,
@@ -372,13 +420,43 @@ PROC_SHOW(io_latency_ms, "ms", IO_LATENCY_STATS_MS_NR,
 PROC_SHOW(io_latency_s, "s", IO_LATENCY_STATS_S_NR,
 		IO_LATENCY_STATS_S_GRAINSIZE, latency_stats_s);
 
+PROC_SHOW(read_io_latency_us, "us", IO_LATENCY_STATS_US_NR,
+		IO_LATENCY_STATS_US_GRAINSIZE, latency_read_stats_us);
+PROC_SHOW(read_io_latency_ms, "ms", IO_LATENCY_STATS_MS_NR,
+		IO_LATENCY_STATS_MS_GRAINSIZE, latency_read_stats_ms);
+PROC_SHOW(read_io_latency_s, "s", IO_LATENCY_STATS_S_NR,
+		IO_LATENCY_STATS_S_GRAINSIZE, latency_read_stats_s);
+
+PROC_SHOW(write_io_latency_us, "us", IO_LATENCY_STATS_US_NR,
+		IO_LATENCY_STATS_US_GRAINSIZE, latency_write_stats_us);
+PROC_SHOW(write_io_latency_ms, "ms", IO_LATENCY_STATS_MS_NR,
+		IO_LATENCY_STATS_MS_GRAINSIZE, latency_write_stats_ms);
+PROC_SHOW(write_io_latency_s, "s", IO_LATENCY_STATS_S_NR,
+		IO_LATENCY_STATS_S_GRAINSIZE, latency_write_stats_s);
+
 PROC_FOPS(io_size);
+PROC_FOPS(io_read_size);
+PROC_FOPS(io_write_size);
+
 PROC_FOPS(soft_io_latency_us);
 PROC_FOPS(soft_io_latency_ms);
 PROC_FOPS(soft_io_latency_s);
+PROC_FOPS(soft_read_io_latency_us);
+PROC_FOPS(soft_read_io_latency_ms);
+PROC_FOPS(soft_read_io_latency_s);
+PROC_FOPS(soft_write_io_latency_us);
+PROC_FOPS(soft_write_io_latency_ms);
+PROC_FOPS(soft_write_io_latency_s);
+
 PROC_FOPS(io_latency_us);
 PROC_FOPS(io_latency_ms);
 PROC_FOPS(io_latency_s);
+PROC_FOPS(read_io_latency_us);
+PROC_FOPS(read_io_latency_ms);
+PROC_FOPS(read_io_latency_s);
+PROC_FOPS(write_io_latency_us);
+PROC_FOPS(write_io_latency_ms);
+PROC_FOPS(write_io_latency_s);
 
 #define ENABLE_ATTR(_name)						\
 static int show_##_name(char *page, char **start, off_t offset,		\
@@ -462,20 +540,41 @@ static int store_io_stats_reset(struct file *file, const char __user *buffer,
 	if (!aux)
 		goto out;
 
-	for (i = 0; i < IO_LATENCY_STATS_MS_NR; i++)
+	for (i = 0; i < IO_LATENCY_STATS_MS_NR; i++) {
 		atomic_set(&aux->lstats->latency_stats_us[i], 0);
-	for (i = 0; i < IO_LATENCY_STATS_MS_NR; i++)
+		atomic_set(&aux->lstats->latency_read_stats_us[i], 0);
+		atomic_set(&aux->lstats->latency_write_stats_us[i], 0);
+	}
+	for (i = 0; i < IO_LATENCY_STATS_MS_NR; i++) {
 		atomic_set(&aux->lstats->latency_stats_ms[i], 0);
-	for (i = 0; i < IO_LATENCY_STATS_S_NR; i++)
+		atomic_set(&aux->lstats->latency_read_stats_ms[i], 0);
+		atomic_set(&aux->lstats->latency_write_stats_ms[i], 0);
+	}
+	for (i = 0; i < IO_LATENCY_STATS_S_NR; i++) {
 		atomic_set(&aux->lstats->latency_stats_s[i], 0);
-	for (i = 0; i < IO_LATENCY_STATS_MS_NR; i++)
+		atomic_set(&aux->lstats->latency_read_stats_s[i], 0);
+		atomic_set(&aux->lstats->latency_write_stats_s[i], 0);
+	}
+	for (i = 0; i < IO_LATENCY_STATS_MS_NR; i++) {
 		atomic_set(&aux->lstats->soft_latency_stats_us[i], 0);
-	for (i = 0; i < IO_LATENCY_STATS_MS_NR; i++)
+		atomic_set(&aux->lstats->soft_latency_read_stats_us[i], 0);
+		atomic_set(&aux->lstats->soft_latency_write_stats_us[i], 0);
+	}
+	for (i = 0; i < IO_LATENCY_STATS_MS_NR; i++) {
 		atomic_set(&aux->lstats->soft_latency_stats_ms[i], 0);
-	for (i = 0; i < IO_LATENCY_STATS_S_NR; i++)
+		atomic_set(&aux->lstats->soft_latency_read_stats_ms[i], 0);
+		atomic_set(&aux->lstats->soft_latency_write_stats_ms[i], 0);
+	}
+	for (i = 0; i < IO_LATENCY_STATS_S_NR; i++) {
 		atomic_set(&aux->lstats->soft_latency_stats_s[i], 0);
-	for (i = 0; i < IO_SIZE_STATS_NR; i++)
+		atomic_set(&aux->lstats->soft_latency_read_stats_s[i], 0);
+		atomic_set(&aux->lstats->soft_latency_write_stats_s[i], 0);
+	}
+	for (i = 0; i < IO_SIZE_STATS_NR; i++) {
 		atomic_set(&aux->lstats->io_size_stats[i], 0);
+		atomic_set(&aux->lstats->io_read_size_stats[i], 0);
+		atomic_set(&aux->lstats->io_write_size_stats[i], 0);
+	}
 
 out:
 	return count;
@@ -491,9 +590,29 @@ static const struct io_latency_proc_node proc_node_list[] = {
 	{ "io_latency_ms", &proc_io_latency_ms_fops},
 	{ "io_latency_s", &proc_io_latency_s_fops},
 
+	{ "read_io_latency_us", &proc_read_io_latency_us_fops},
+	{ "read_io_latency_ms", &proc_read_io_latency_ms_fops},
+	{ "read_io_latency_s", &proc_read_io_latency_s_fops},
+
+	{ "write_io_latency_us", &proc_write_io_latency_us_fops},
+	{ "write_io_latency_ms", &proc_write_io_latency_ms_fops},
+	{ "write_io_latency_s", &proc_write_io_latency_s_fops},
+
 	{ "soft_io_latency_us", &proc_soft_io_latency_us_fops},
 	{ "soft_io_latency_ms", &proc_soft_io_latency_ms_fops},
 	{ "soft_io_latency_s", &proc_soft_io_latency_s_fops},
+
+	{ "soft_read_io_latency_us", &proc_soft_read_io_latency_us_fops},
+	{ "soft_read_io_latency_ms", &proc_soft_read_io_latency_ms_fops},
+	{ "soft_read_io_latency_s", &proc_soft_read_io_latency_s_fops},
+
+	{ "soft_write_io_latency_us", &proc_soft_write_io_latency_us_fops},
+	{ "soft_wirte_io_latency_ms", &proc_soft_write_io_latency_ms_fops},
+	{ "soft_write_io_latency_s", &proc_soft_write_io_latency_s_fops},
+
+	{ "io_size", &proc_io_size_fops},
+	{ "io_read_size", &proc_io_read_size_fops},
+	{ "io_write_size", &proc_io_write_size_fops},
 };
 
 static int create_procfs(void)
@@ -536,13 +655,6 @@ static int create_procfs(void)
 			add_proc_node(proc_node_list[i].name, proc_node,
 					proc_dir);
 		}
-		/* create io_size */
-		proc_node = proc_create_data("io_size", S_IFREG, proc_dir,
-					&proc_io_size_fops,
-					sd->device->request_queue);
-		if (!proc_node)
-			goto err;
-		add_proc_node("io_size", proc_node, proc_dir);
 		/* create io_stats_reset */
 		proc_node = proc_create_data("io_stats_reset", S_IFREG,
 					proc_dir, NULL,
