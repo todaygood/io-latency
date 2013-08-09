@@ -481,6 +481,21 @@ out:
 	return count;
 }
 
+struct io_latency_proc_node {
+	char *name;
+	const struct file_operations *fops;
+};
+
+static const struct io_latency_proc_node proc_node_list[] = {
+	{ "io_latency_us", &proc_io_latency_us_fops},
+	{ "io_latency_ms", &proc_io_latency_ms_fops},
+	{ "io_latency_s", &proc_io_latency_s_fops},
+
+	{ "soft_io_latency_us", &proc_soft_io_latency_us_fops},
+	{ "soft_io_latency_ms", &proc_soft_io_latency_ms_fops},
+	{ "soft_io_latency_s", &proc_soft_io_latency_s_fops},
+};
+
 static int create_procfs(void)
 {
 	struct class_dev_iter iter;
@@ -491,6 +506,8 @@ static int create_procfs(void)
 	struct hash_table *request_table = NULL;
 	struct request_queue_aux *aux;
 	char table_name[MAX_HASH_TABLE_NAME_LEN];
+	int num = sizeof(proc_node_list) / sizeof(struct io_latency_proc_node);
+	int i;
 
 	proc_io_latency = proc_mkdir("io-latency", NULL);
 	if (!proc_io_latency)
@@ -508,48 +525,17 @@ static int create_procfs(void)
 		if (!proc_dir)
 			goto err;
 		add_proc_node(sd->disk->disk_name, proc_dir, proc_io_latency);
-		/* create io_latency_us */
-		proc_node = proc_create_data("io_latency_us", S_IFREG, proc_dir,
-					&proc_io_latency_us_fops,
-					sd->device->request_queue);
-		if (!proc_node)
-			goto err;
-		add_proc_node("io_latency_us", proc_node, proc_dir);
-		/* create io_latency_ms */
-		proc_node = proc_create_data("io_latency_ms", S_IFREG, proc_dir,
-					&proc_io_latency_ms_fops,
-					sd->device->request_queue);
-		if (!proc_node)
-			goto err;
-		add_proc_node("io_latency_ms", proc_node, proc_dir);
-		/* create io_latency_s */
-		proc_node = proc_create_data("io_latency_s", S_IFREG, proc_dir,
-					&proc_io_latency_s_fops,
-					sd->device->request_queue);
-		if (!proc_node)
-			goto err;
-		add_proc_node("io_latency_s", proc_node, proc_dir);
-		/* create soft_io_latency_us */
-		proc_node = proc_create_data("soft_io_latency_us", S_IFREG,
-					proc_dir, &proc_soft_io_latency_us_fops,
-					sd->device->request_queue);
-		if (!proc_node)
-			goto err;
-		add_proc_node("soft_io_latency_us", proc_node, proc_dir);
-		/* create soft_io_latency_ms */
-		proc_node = proc_create_data("soft_io_latency_ms", S_IFREG,
-					proc_dir, &proc_soft_io_latency_ms_fops,
-					sd->device->request_queue);
-		if (!proc_node)
-			goto err;
-		add_proc_node("soft_io_latency_ms", proc_node, proc_dir);
-		/* create soft_io_latency_s */
-		proc_node = proc_create_data("soft_io_latency_s", S_IFREG,
-					proc_dir, &proc_soft_io_latency_s_fops,
-					sd->device->request_queue);
-		if (!proc_node)
-			goto err;
-		add_proc_node("soft_io_latency_s", proc_node, proc_dir);
+
+		for (i = 0; i < num; i++) {
+			proc_node = proc_create_data(proc_node_list[i].name,
+						S_IFREG, proc_dir,
+						proc_node_list[i].fops,
+						sd->device->request_queue);
+			if (!proc_node)
+				goto err;
+			add_proc_node(proc_node_list[i].name, proc_node,
+					proc_dir);
+		}
 		/* create io_size */
 		proc_node = proc_create_data("io_size", S_IFREG, proc_dir,
 					&proc_io_size_fops,
