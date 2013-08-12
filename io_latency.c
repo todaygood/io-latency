@@ -20,7 +20,6 @@
 #define HOTFIX_FINISH_REQUEST	2
 
 #define MAX_REQUEST_QUEUE	97
-#define MAX_REQUESTS		9973
 
 /* /proc/io-latency/sda/
  * /proc/io-latency/sda/enable_latency
@@ -62,7 +61,6 @@ static void delete_procfs(void);
 /* every request_queue has an instance of this struct */
 struct request_queue_aux {
 	struct latency_stats *lstats;
-	struct hash_table *hash_table;
 	short enable_latency;
 	short enable_soft_latency;
 };
@@ -145,9 +143,7 @@ static struct request *overwrite_get_request_wait(struct request_queue *q,
 		int rw_flags, struct bio *bio)
 {
 	struct request *req;
-	struct hash_node *queue_nd, *req_nd;
 	struct request_queue_aux *aux;
-	ktime_t ts;
 
 	orig_get_request_wait = ali_hotfix_orig_func(
 			&io_latency_hotfix_list[HOTFIX_GET_REQUEST]);
@@ -158,26 +154,15 @@ static struct request *overwrite_get_request_wait(struct request_queue *q,
 	if (!bio || bio->bi_size <= 0)
 		goto out;
 
-	queue_nd = hash_table_find(request_queue_table,
-						(unsigned long)req->q);
-	if (!queue_nd)
-		goto out;
-
-	aux = (struct request_queue_aux *)(queue_nd->value);
-	if (!aux || !aux->hash_table || !aux->lstats)
+	aux = (struct request_queue_aux *)q->pad;
+	if (!aux || !aux->lstats)
 		goto out;
 
 	if (!(aux->enable_latency) && !(aux->enable_soft_latency))
 		goto out;
 
-	/* insert request to hash table if it does not exists */
-	ts = ktime_get();
-	req_nd = hash_table_find(aux->hash_table, (unsigned long)req);
-	if (req_nd)
-		req_nd->value = ktime_to_us(ts);
-	else
-		hash_table_insert(aux->hash_table, (unsigned long)req,
-					(unsigned long)ktime_to_us(ts));
+	/* put time into 'pad' now */
+	req->pad = (void *)ktime_to_us(ktime_get());
 out:
 	return req;
 }
@@ -186,7 +171,6 @@ static int (*orig_scsi_dispatch_cmd)(struct scsi_cmnd *cmd);
 static int overwrite_scsi_dispatch_cmd(struct scsi_cmnd *cmd)
 {
 	struct request *req;
-	struct hash_node *req_nd, *queue_nd;
 	struct request_queue_aux *aux;
 	unsigned long stime, now;
 	int bytes;
@@ -197,33 +181,26 @@ static int overwrite_scsi_dispatch_cmd(struct scsi_cmnd *cmd)
 	if (!req || !req->q)
 		goto out;
 
-	queue_nd = hash_table_find(request_queue_table,
-						(unsigned long)req->q);
-	if (!queue_nd)
-		goto out;
-
-	aux = (struct request_queue_aux *)(queue_nd->value);
-	if (!aux || !aux->hash_table || !aux->lstats)
+	aux = (struct request_queue_aux *)req->q->pad;
+	if (!aux || !aux->lstats)
 		goto out;
 
 	if (!(aux->enable_soft_latency))
 		goto out;
 
 	bytes = blk_rq_bytes(req);
-	if (bytes <= 0) {
-		hash_table_remove(aux->hash_table, (unsigned long)req);
+
+	if (bytes <= 0)
 		goto out;
-	}
-	/* find request in request hash table */
-	req_nd = hash_table_find(aux->hash_table, (unsigned long)req);
-	if (!req_nd)
+
+	if (!req->pad)
 		goto out;
 
 	now = ktime_to_us(ktime_get());
-	stime = req_nd->value;
-	req_nd->value = now;
+	stime = (unsigned long)req->pad;
+	req->pad = (void *)now;
 	update_latency_stats(aux->lstats, stime, now, 1, rq_data_dir(req));
-	update_io_size_stats(aux->lstats, blk_rq_bytes(req), rq_data_dir(req));
+	update_io_size_stats(aux->lstats, bytes, rq_data_dir(req));
 out:
 	return orig_scsi_dispatch_cmd(cmd);
 }
@@ -231,7 +208,6 @@ out:
 static void (*orig_blk_finish_request)(struct request *req, int error);
 static void overwrite_blk_finish_request(struct request *req, int error)
 {
-	struct hash_node *queue_nd, *req_nd;
 	struct request_queue_aux *aux;
 	unsigned long stime, now;
 
@@ -241,24 +217,14 @@ static void overwrite_blk_finish_request(struct request *req, int error)
 	if (!req || !req->q)
 		goto out;
 
-	queue_nd = hash_table_find(request_queue_table,
-						(unsigned long)(req->q));
-	if (!queue_nd)
-		goto out;
-
-	aux = (struct request_queue_aux *)(queue_nd->value);
-	if (!aux || !aux->hash_table || !aux->lstats)
+	aux = (struct request_queue_aux *)req->q->pad;
+	if (!aux || !aux->lstats)
 		goto out;
 
 	if (!(aux->enable_latency))
 		goto out;
 
-	/* find request in request hash table and update it's value */
-	req_nd = hash_table_find(aux->hash_table, (unsigned long)req);
-	if (!req_nd)
-		goto out;
-
-	stime = req_nd->value;
+	stime = (unsigned long)req->pad;
 	now = ktime_to_us(ktime_get());
 	update_latency_stats(aux->lstats, stime, now, 0, rq_data_dir(req));
 out:
@@ -288,13 +254,11 @@ static int _name##_seq_show(struct seq_file *seq, void *v)		\
 {									\
 	struct request_queue *q = seq->private;				\
 	struct request_queue_aux *aux;					\
-	struct hash_node *nd;						\
 									\
-	nd = hash_table_find(request_queue_table, (unsigned long)q);	\
-	if (!nd)							\
+	if (!q)								\
 		seq_puts(seq, "none");					\
 	else {								\
-		aux = (struct request_queue_aux *)nd->value;		\
+		aux = (struct request_queue_aux *)q->pad;		\
 		_name##_show(seq, aux->lstats);				\
 	}								\
 	return 0;							\
@@ -464,16 +428,14 @@ PROC_FOPS(write_io_latency_s);
 static int show_##_name(char *page, char **start, off_t offset,		\
 					int count, int *eof, void *data)\
 {									\
-	struct hash_node *nd;						\
 	struct request_queue_aux *aux;					\
+	struct request_queue *queue;					\
 	int res = 0;							\
 									\
 	if (!data)							\
 		goto out;						\
-	nd = hash_table_find(request_queue_table, (unsigned long)data);	\
-	if (!nd)							\
-		goto out;						\
-	aux = (struct request_queue_aux *)nd->value;			\
+	queue = (struct request_queue *)data;				\
+	aux = (struct request_queue_aux *)queue->pad;			\
 	if (!aux)							\
 		goto out;						\
 	if (aux->_name)							\
@@ -487,18 +449,18 @@ out:									\
 static int store_##_name(struct file *file, const char __user *buffer,	\
 					unsigned long count, void *data)\
 {									\
-	struct hash_node *nd;						\
 	struct request_queue_aux *aux;					\
+	struct request_queue *queue;					\
 	char *page = NULL;						\
 									\
 	if (count <= 0 || count > PAGE_SIZE)				\
 		goto out;						\
 	if (!data)							\
 		goto out;						\
-	nd = hash_table_find(request_queue_table, (unsigned long)data);	\
-	if (!nd)							\
+	queue = (struct request_queue *)data;				\
+	if (!queue)							\
 		goto out;						\
-	aux = (struct request_queue_aux *)nd->value;			\
+	aux = (struct request_queue_aux *)queue->pad;			\
 	if (!aux)							\
 		goto out;						\
 	page = (char *)__get_free_page(GFP_KERNEL);			\
@@ -528,17 +490,18 @@ static int show_io_stats_reset(char *page, char **start, off_t offset,
 static int store_io_stats_reset(struct file *file, const char __user *buffer,
 					unsigned long count, void *data)
 {
-	struct hash_node *nd;
 	struct request_queue_aux *aux;
+	struct request_queue *queue;
 	int i;
 
 	if (count <= 0)
 		goto out;
 
-	nd = hash_table_find(request_queue_table, (unsigned long)data);
-	if (!nd)
+	queue = (struct request_queue *)data;
+	if (!queue)
 		goto out;
-	aux = (struct request_queue_aux *)nd->value;
+
+	aux = (struct request_queue_aux *)queue->pad;
 	if (!aux)
 		goto out;
 
@@ -624,7 +587,6 @@ static int create_procfs(void)
 	struct scsi_disk *sd;
 	struct proc_dir_entry *proc_node, *proc_dir;
 	struct latency_stats *lstats;
-	struct hash_table *request_table = NULL;
 	struct request_queue_aux *aux;
 	char table_name[MAX_HASH_TABLE_NAME_LEN];
 	int num = sizeof(proc_node_list) / sizeof(struct io_latency_proc_node);
@@ -689,25 +651,19 @@ static int create_procfs(void)
 		if (!lstats)
 			goto err;
 		sprintf(table_name, "htable-%s", sd->disk->disk_name);
-		request_table = create_hash_table(table_name, MAX_REQUESTS);
-		if (!request_table) {
-			destroy_latency_stats(lstats);
-			goto err;
-		}
 		aux = (struct request_queue_aux *)kmem_cache_zalloc(
 				request_table_aux_cache, GFP_KERNEL);
 		if (!aux) {
-			destroy_hash_table(request_table);
 			destroy_latency_stats(lstats);
 			goto err;
 		}
 		aux->lstats = lstats;
-		aux->hash_table = request_table;
 		aux->enable_latency = 1;
 		aux->enable_soft_latency = 1;
 		hash_table_insert(request_queue_table,
 				(unsigned long)(sd->device->request_queue),
 				(unsigned long)aux);
+		sd->device->request_queue->pad = aux;
 	}
 	class_dev_iter_exit(&iter);
 
@@ -721,8 +677,6 @@ static int free_aux(struct hash_node *nd)
 {
 	struct request_queue_aux *aux = (struct request_queue_aux *)(nd->value);
 	if (aux) {
-		if (aux->hash_table)
-			destroy_hash_table(aux->hash_table);
 		if (aux->lstats)
 			destroy_latency_stats(aux->lstats);
 		kmem_cache_free(request_table_aux_cache, aux);
