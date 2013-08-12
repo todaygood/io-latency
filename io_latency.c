@@ -13,6 +13,8 @@
 #include "hash_table.h"
 #include "latency_stats.h"
 
+#define IO_LATENCY_VERSION	"1.0.0"
+
 #define HOTFIX_GET_REQUEST	0
 #define HOTFIX_SCSI_DISPATCH	1
 #define HOTFIX_FINISH_REQUEST	2
@@ -829,3 +831,4 @@ module_exit(io_latency_exit)
 MODULE_AUTHOR("Robin Dong <sanbai@taobao.com>");
 MODULE_DESCRIPTION("Collect statistics about disk io");
 MODULE_LICENSE("GPL");
+MODULE_VERSION(IO_LATENCY_VERSION);
