@@ -21,19 +21,6 @@
 
 #define MAX_REQUEST_QUEUE	97
 
-/* /proc/io-latency/sda/
- * /proc/io-latency/sda/enable_latency
- * /proc/io-latency/sda/enable_soft_latency
- * /proc/io-latency/sda/io_latency_s
- * /proc/io-latency/sda/io_latency_ms
- * /proc/io-latency/sda/io_latency_us
- * /proc/io-latency/sda/soft_io_latency_s
- * /proc/io-latency/sda/soft_io_latency_ms
- * /proc/io-latency/sda/soft_io_latency_us
- * /proc/io-latency/sda/io_latency_reset
- */
-#define NR_PROC_TYPE		10
-
 static struct proc_dir_entry *proc_io_latency;
 static struct class *sd_disk_class;
 static struct hash_table *request_queue_table;
@@ -596,8 +583,11 @@ static int create_procfs(void)
 	if (!proc_io_latency)
 		goto err;
 
+	/* proc_node in proc_node_list and
+	 * 'io_stats_reset' 'enable_latency' 'enable_soft_latency'
+	 */
 	dir_proc_list = kzalloc(sizeof(struct proc_entry_name) *
-			MAX_REQUEST_QUEUE * NR_PROC_TYPE, GFP_KERNEL);
+			MAX_REQUEST_QUEUE * (num + 3), GFP_KERNEL);
 	if (!dir_proc_list)
 		goto err;
 
