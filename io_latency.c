@@ -479,7 +479,6 @@ static int store_io_stats_reset(struct file *file, const char __user *buffer,
 {
 	struct request_queue_aux *aux;
 	struct request_queue *queue;
-	int i;
 
 	if (count <= 0)
 		goto out;
@@ -492,41 +491,7 @@ static int store_io_stats_reset(struct file *file, const char __user *buffer,
 	if (!aux)
 		goto out;
 
-	for (i = 0; i < IO_LATENCY_STATS_MS_NR; i++) {
-		atomic_set(&aux->lstats->latency_stats_us[i], 0);
-		atomic_set(&aux->lstats->latency_read_stats_us[i], 0);
-		atomic_set(&aux->lstats->latency_write_stats_us[i], 0);
-	}
-	for (i = 0; i < IO_LATENCY_STATS_MS_NR; i++) {
-		atomic_set(&aux->lstats->latency_stats_ms[i], 0);
-		atomic_set(&aux->lstats->latency_read_stats_ms[i], 0);
-		atomic_set(&aux->lstats->latency_write_stats_ms[i], 0);
-	}
-	for (i = 0; i < IO_LATENCY_STATS_S_NR; i++) {
-		atomic_set(&aux->lstats->latency_stats_s[i], 0);
-		atomic_set(&aux->lstats->latency_read_stats_s[i], 0);
-		atomic_set(&aux->lstats->latency_write_stats_s[i], 0);
-	}
-	for (i = 0; i < IO_LATENCY_STATS_MS_NR; i++) {
-		atomic_set(&aux->lstats->soft_latency_stats_us[i], 0);
-		atomic_set(&aux->lstats->soft_latency_read_stats_us[i], 0);
-		atomic_set(&aux->lstats->soft_latency_write_stats_us[i], 0);
-	}
-	for (i = 0; i < IO_LATENCY_STATS_MS_NR; i++) {
-		atomic_set(&aux->lstats->soft_latency_stats_ms[i], 0);
-		atomic_set(&aux->lstats->soft_latency_read_stats_ms[i], 0);
-		atomic_set(&aux->lstats->soft_latency_write_stats_ms[i], 0);
-	}
-	for (i = 0; i < IO_LATENCY_STATS_S_NR; i++) {
-		atomic_set(&aux->lstats->soft_latency_stats_s[i], 0);
-		atomic_set(&aux->lstats->soft_latency_read_stats_s[i], 0);
-		atomic_set(&aux->lstats->soft_latency_write_stats_s[i], 0);
-	}
-	for (i = 0; i < IO_SIZE_STATS_NR; i++) {
-		atomic_set(&aux->lstats->io_size_stats[i], 0);
-		atomic_set(&aux->lstats->io_read_size_stats[i], 0);
-		atomic_set(&aux->lstats->io_write_size_stats[i], 0);
-	}
+	reset_latency_stats(aux->lstats);
 
 out:
 	return count;

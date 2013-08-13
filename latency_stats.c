@@ -66,15 +66,9 @@ void exit_latency_stats(void)
 	}
 }
 
-struct latency_stats *create_latency_stats(void)
+void reset_latency_stats(struct latency_stats *lstats)
 {
-	struct latency_stats *lstats;
 	int r;
-
-	lstats = kmem_cache_zalloc(latency_stats_cache, GFP_KERNEL);
-	if (!lstats)
-		return (struct latency_stats *)-ENOMEM;
-
 	/* initial latency stats buckets */
 	for (r = 0; r < IO_LATENCY_STATS_S_NR; r++) {
 		atomic_set(&(lstats->latency_stats_s[r]), 0);
@@ -105,7 +99,17 @@ struct latency_stats *create_latency_stats(void)
 		atomic_set(&(lstats->io_read_size_stats[r]), 0);
 		atomic_set(&(lstats->io_write_size_stats[r]), 0);
 	}
+}
 
+struct latency_stats *create_latency_stats(void)
+{
+	struct latency_stats *lstats;
+
+	lstats = kmem_cache_zalloc(latency_stats_cache, GFP_KERNEL);
+	if (!lstats)
+		return (struct latency_stats *)-ENOMEM;
+
+	reset_latency_stats(lstats);
 	return lstats;
 }
 

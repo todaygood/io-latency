@@ -52,5 +52,5 @@ void update_latency_stats(struct latency_stats *lstats, unsigned long stime,
 			unsigned long now, int soft, int rw);
 void update_io_size_stats(struct latency_stats *lstats, unsigned long size,
 			int rw);
-
+void reset_latency_stats(struct latency_stats *lstats);
 #endif
