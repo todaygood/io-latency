@@ -47,7 +47,7 @@ static void delete_procfs(void);
 
 /* every request_queue has an instance of this struct */
 struct request_queue_aux {
-	struct latency_stats *lstats;
+	struct latency_stats __percpu *lstats;
 	short enable_latency;
 	short enable_soft_latency;
 };
@@ -138,14 +138,11 @@ static struct request *overwrite_get_request_wait(struct request_queue *q,
 	if (!req || !req->q)
 		goto out;
 
-	if (!bio || bio->bi_size <= 0)
-		goto out;
-
 	aux = (struct request_queue_aux *)q->pad;
 	if (!aux || !aux->lstats)
 		goto out;
 
-	if (!(aux->enable_latency) && !(aux->enable_soft_latency))
+	if (!aux->enable_latency && !aux->enable_soft_latency)
 		goto out;
 
 	/* put time into 'pad' now */
@@ -168,26 +165,28 @@ static int overwrite_scsi_dispatch_cmd(struct scsi_cmnd *cmd)
 	if (!req || !req->q)
 		goto out;
 
+	if (!req->pad)
+		goto out;
+
 	aux = (struct request_queue_aux *)req->q->pad;
 	if (!aux || !aux->lstats)
 		goto out;
 
-	if (!(aux->enable_soft_latency))
-		goto out;
-
 	bytes = blk_rq_bytes(req);
-
 	if (bytes <= 0)
 		goto out;
 
-	if (!req->pad)
-		goto out;
-
 	now = ktime_to_us(ktime_get());
-	stime = (unsigned long)req->pad;
-	req->pad = (void *)now;
-	update_latency_stats(aux->lstats, stime, now, 1, rq_data_dir(req));
-	update_io_size_stats(aux->lstats, bytes, rq_data_dir(req));
+	if (aux->enable_soft_latency) {
+		stime = (unsigned long)req->pad;
+		update_latency_stats(this_cpu_ptr(aux->lstats),
+				stime, now, 1, rq_data_dir(req));
+	}
+	if (aux->enable_latency) {
+		req->pad = (void *)now;
+		update_io_size_stats(this_cpu_ptr(aux->lstats),
+					bytes, rq_data_dir(req));
+	}
 out:
 	return orig_scsi_dispatch_cmd(cmd);
 }
@@ -198,40 +197,49 @@ static void overwrite_blk_finish_request(struct request *req, int error)
 	struct request_queue_aux *aux;
 	unsigned long stime, now;
 
-	orig_blk_finish_request =
-		ali_hotfix_orig_func(
+	orig_blk_finish_request = ali_hotfix_orig_func(
 			&io_latency_hotfix_list[HOTFIX_FINISH_REQUEST]);
 	if (!req || !req->q)
+		goto out;
+
+	if (!req->pad)
 		goto out;
 
 	aux = (struct request_queue_aux *)req->q->pad;
 	if (!aux || !aux->lstats)
 		goto out;
 
-	if (!(aux->enable_latency))
+	if (!aux->enable_latency)
 		goto out;
 
 	stime = (unsigned long)req->pad;
+	req->pad = NULL;
 	now = ktime_to_us(ktime_get());
-	update_latency_stats(aux->lstats, stime, now, 0, rq_data_dir(req));
+	update_latency_stats(this_cpu_ptr(aux->lstats),
+				stime, now, 0, rq_data_dir(req));
 out:
 	orig_blk_finish_request(req, error);
 }
 
 #define PROC_SHOW(_name, _unit, _nr, _grain, _member)			\
 static void _name##_show(struct seq_file *seq,				\
-				struct latency_stats *lstats)		\
+				struct latency_stats __percpu *lstats)	\
 {									\
 	int slot_base = 0;						\
-	int i;								\
+	int i, cpu;							\
+	unsigned long sum;						\
 									\
 	for (i = 0; i < _nr; i++) {					\
+		sum = 0;						\
+		for_each_possible_cpu(cpu)				\
+			sum += per_cpu_ptr(lstats, cpu)->_member[i];	\
+									\
 		seq_printf(seq,						\
-			"%d-%d(%s):%d\n",				\
+			"%d-%d(%s):%lu\n",				\
 			slot_base,					\
 			slot_base + _grain - 1,				\
 			_unit,						\
-			atomic_read(&(lstats->_member[i])));		\
+			sum);						\
 		slot_base += _grain;					\
 	}								\
 }
@@ -298,49 +306,64 @@ static void io_latency_seq_stop(struct seq_file *seq, void *v)
 
 #define KB (1024)
 static void io_size_show(struct seq_file *seq,
-				struct latency_stats *lstats)
+				struct latency_stats __percpu *lstats)
 {
 	int slot_base = 0;
-	int i;
+	int i, cpu;
+	unsigned long sum;
 
 	for (i = 0; i < IO_SIZE_STATS_NR; i++) {
+		sum = 0;
+		for_each_possible_cpu(cpu)
+			sum += per_cpu_ptr(lstats, cpu)->io_size_stats[i];
+
 		seq_printf(seq,
-			"%d-%d(KB):%d\n",
+			"%d-%d(KB):%lu\n",
 			(slot_base / KB),
 			(slot_base + IO_SIZE_STATS_GRAINSIZE - 1) / KB,
-			atomic_read(&(lstats->io_size_stats[i])));
+			sum);
 		slot_base += IO_SIZE_STATS_GRAINSIZE;
 	}
 }
 
 static void io_read_size_show(struct seq_file *seq,
-				struct latency_stats *lstats)
+				struct latency_stats __percpu *lstats)
 {
 	int slot_base = 0;
-	int i;
+	int i, cpu;
+	unsigned long sum;
 
 	for (i = 0; i < IO_SIZE_STATS_NR; i++) {
+		sum = 0;
+		for_each_possible_cpu(cpu)
+			sum += per_cpu_ptr(lstats, cpu)->io_read_size_stats[i];
+
 		seq_printf(seq,
-			"%d-%d(KB):%d\n",
+			"%d-%d(KB):%lu\n",
 			(slot_base / KB),
 			(slot_base + IO_SIZE_STATS_GRAINSIZE - 1) / KB,
-			atomic_read(&(lstats->io_read_size_stats[i])));
+			sum);
 		slot_base += IO_SIZE_STATS_GRAINSIZE;
 	}
 }
 
 static void io_write_size_show(struct seq_file *seq,
-				struct latency_stats *lstats)
+				struct latency_stats __percpu *lstats)
 {
 	int slot_base = 0;
-	int i;
+	int i, cpu;
+	unsigned long sum;
 
 	for (i = 0; i < IO_SIZE_STATS_NR; i++) {
+		sum = 0;
+		for_each_possible_cpu(cpu)
+			sum += per_cpu_ptr(lstats, cpu)->io_write_size_stats[i];
+
 		seq_printf(seq,
-			"%d-%d(KB):%d\n",
+			"%d-%d(KB):%lu\n",
 			(slot_base / KB),
 			(slot_base + IO_SIZE_STATS_GRAINSIZE - 1) / KB,
-			atomic_read(&(lstats->io_write_size_stats[i])));
+			sum);
 		slot_base += IO_SIZE_STATS_GRAINSIZE;
 	}
 }
@@ -538,7 +561,7 @@ static int create_procfs(void)
 	struct device *dev;
 	struct scsi_disk *sd;
 	struct proc_dir_entry *proc_node, *proc_dir;
-	struct latency_stats *lstats;
+	struct latency_stats __percpu *lstats;
 	struct request_queue_aux *aux;
 	char table_name[MAX_HASH_TABLE_NAME_LEN];
 	int num = sizeof(proc_node_list) / sizeof(struct io_latency_proc_node);

@@ -20,6 +20,7 @@
 #include <asm-generic/div64.h>
 #include <linux/slab.h>
 #include <linux/clocksource.h>
+#include <linux/percpu.h>
 
 #include "latency_stats.h"
 
@@ -66,76 +67,72 @@ void exit_latency_stats(void)
 	}
 }
 
-void reset_latency_stats(struct latency_stats *lstats)
+void reset_latency_stats(struct latency_stats __percpu *lstats)
 {
-	int r;
-	/* initial latency stats buckets */
-	for (r = 0; r < IO_LATENCY_STATS_S_NR; r++) {
-		atomic_set(&(lstats->latency_stats_s[r]), 0);
-		atomic_set(&(lstats->latency_read_stats_s[r]), 0);
-		atomic_set(&(lstats->latency_write_stats_s[r]), 0);
-		atomic_set(&(lstats->soft_latency_stats_s[r]), 0);
-		atomic_set(&(lstats->soft_latency_read_stats_s[r]), 0);
-		atomic_set(&(lstats->soft_latency_write_stats_s[r]), 0);
-	}
-	for (r = 0; r < IO_LATENCY_STATS_MS_NR; r++) {
-		atomic_set(&(lstats->latency_stats_ms[r]), 0);
-		atomic_set(&(lstats->latency_read_stats_ms[r]), 0);
-		atomic_set(&(lstats->latency_write_stats_ms[r]), 0);
-		atomic_set(&(lstats->soft_latency_stats_ms[r]), 0);
-		atomic_set(&(lstats->soft_latency_read_stats_ms[r]), 0);
-		atomic_set(&(lstats->soft_latency_write_stats_ms[r]), 0);
-	}
-	for (r = 0; r < IO_LATENCY_STATS_US_NR; r++) {
-		atomic_set(&(lstats->latency_stats_us[r]), 0);
-		atomic_set(&(lstats->latency_read_stats_us[r]), 0);
-		atomic_set(&(lstats->latency_write_stats_us[r]), 0);
-		atomic_set(&(lstats->soft_latency_stats_us[r]), 0);
-		atomic_set(&(lstats->soft_latency_read_stats_us[r]), 0);
-		atomic_set(&(lstats->soft_latency_write_stats_us[r]), 0);
-	}
-	for (r = 0; r < IO_SIZE_STATS_NR; r++) {
-		atomic_set(&(lstats->io_size_stats[r]), 0);
-		atomic_set(&(lstats->io_read_size_stats[r]), 0);
-		atomic_set(&(lstats->io_write_size_stats[r]), 0);
+	int r, cpu;
+	struct latency_stats *pstats;
+
+	for_each_possible_cpu(cpu) {
+		pstats = per_cpu_ptr(lstats, cpu);
+		/* reset latency stats buckets */
+		for (r = 0; r < IO_LATENCY_STATS_S_NR; r++) {
+			pstats->latency_stats_s[r] = 0;
+			pstats->latency_read_stats_s[r] = 0;
+			pstats->latency_write_stats_s[r] = 0;
+			pstats->soft_latency_stats_s[r] = 0;
+			pstats->soft_latency_read_stats_s[r] = 0;
+			pstats->soft_latency_write_stats_s[r] = 0;
+		}
+		for (r = 0; r < IO_LATENCY_STATS_MS_NR; r++) {
+			pstats->latency_stats_ms[r] = 0;
+			pstats->latency_read_stats_ms[r] = 0;
+			pstats->latency_write_stats_ms[r] = 0;
+			pstats->soft_latency_stats_ms[r] = 0;
+			pstats->soft_latency_read_stats_ms[r] = 0;
+			pstats->soft_latency_write_stats_ms[r] = 0;
+		}
+		for (r = 0; r < IO_LATENCY_STATS_US_NR; r++) {
+			pstats->latency_stats_us[r] = 0;
+			pstats->latency_read_stats_us[r] = 0;
+			pstats->latency_write_stats_us[r] = 0;
+			pstats->soft_latency_stats_us[r] = 0;
+			pstats->soft_latency_read_stats_us[r] = 0;
+			pstats->soft_latency_write_stats_us[r] = 0;
+		}
+		for (r = 0; r < IO_SIZE_STATS_NR; r++) {
+			pstats->io_size_stats[r] = 0;
+			pstats->io_read_size_stats[r] = 0;
+			pstats->io_write_size_stats[r] = 0;
+		}
 	}
 }
 
-struct latency_stats *create_latency_stats(void)
+struct latency_stats __percpu *create_latency_stats(void)
 {
-	struct latency_stats *lstats;
-
-	lstats = kmem_cache_zalloc(latency_stats_cache, GFP_KERNEL);
-	if (!lstats)
-		return (struct latency_stats *)-ENOMEM;
-
-	reset_latency_stats(lstats);
-	return lstats;
+	return alloc_percpu(struct latency_stats);
 }
 
-void destroy_latency_stats(struct latency_stats *lstats)
+void destroy_latency_stats(struct latency_stats __percpu *lstats)
 {
 	if (lstats)
-		kmem_cache_free(latency_stats_cache, lstats);
+		free_percpu(lstats);
 }
 
 #define INC_LATENCY(lstats, idx, soft, rw, grain)			\
 do {									\
 									\
 if (soft) {								\
-	atomic_inc(lstats->soft_latency_stats_##grain + idx);		\
+	lstats->soft_latency_stats_##grain[idx]++;			\
 	if (rw)								\
-		atomic_inc(lstats->soft_latency_write_stats_##grain	\
-				+ idx);					\
+		lstats->soft_latency_write_stats_##grain[idx]++;	\
 	else								\
-		atomic_inc(lstats->soft_latency_read_stats_##grain	\
-				+ idx);					\
+		lstats->soft_latency_read_stats_##grain[idx]++;		\
 } else {								\
-	atomic_inc(lstats->latency_stats_##grain + idx);		\
+	lstats->latency_stats_##grain[idx]++;				\
 	if (rw)								\
-		atomic_inc(lstats->latency_write_stats_##grain + idx);	\
+		lstats->latency_write_stats_##grain[idx]++;		\
 	else								\
-		atomic_inc(lstats->latency_read_stats_##grain + idx);	\
+		lstats->latency_read_stats_##grain[idx]++;		\
 }									\
 									\
 } while (0)
@@ -184,10 +181,10 @@ void update_io_size_stats(struct latency_stats *lstats, unsigned long size,
 		idx = size/IO_SIZE_STATS_GRAINSIZE;
 		if (idx > (IO_SIZE_STATS_NR - 1))
 			idx = IO_SIZE_STATS_NR - 1;
-		atomic_inc(&(lstats->io_size_stats[idx]));
+		lstats->io_size_stats[idx]++;
 		if (rw)
-			atomic_inc(lstats->io_write_size_stats + idx);
+			lstats->io_write_size_stats[idx]++;
 		else
-			atomic_inc(lstats->io_read_size_stats + idx);
+			lstats->io_read_size_stats[idx]++;
 	}
 }

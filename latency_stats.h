@@ -17,40 +17,40 @@
 
 struct latency_stats {
 	/* latency statistic buckets */
-	atomic_t latency_stats_s[IO_LATENCY_STATS_S_NR];
-	atomic_t latency_stats_ms[IO_LATENCY_STATS_MS_NR];
-	atomic_t latency_stats_us[IO_LATENCY_STATS_US_NR];
-	atomic_t latency_read_stats_s[IO_LATENCY_STATS_S_NR];
-	atomic_t latency_read_stats_ms[IO_LATENCY_STATS_MS_NR];
-	atomic_t latency_read_stats_us[IO_LATENCY_STATS_US_NR];
-	atomic_t latency_write_stats_s[IO_LATENCY_STATS_S_NR];
-	atomic_t latency_write_stats_ms[IO_LATENCY_STATS_MS_NR];
-	atomic_t latency_write_stats_us[IO_LATENCY_STATS_US_NR];
+	unsigned long latency_stats_s[IO_LATENCY_STATS_S_NR];
+	unsigned long latency_stats_ms[IO_LATENCY_STATS_MS_NR];
+	unsigned long latency_stats_us[IO_LATENCY_STATS_US_NR];
+	unsigned long latency_read_stats_s[IO_LATENCY_STATS_S_NR];
+	unsigned long latency_read_stats_ms[IO_LATENCY_STATS_MS_NR];
+	unsigned long latency_read_stats_us[IO_LATENCY_STATS_US_NR];
+	unsigned long latency_write_stats_s[IO_LATENCY_STATS_S_NR];
+	unsigned long latency_write_stats_ms[IO_LATENCY_STATS_MS_NR];
+	unsigned long latency_write_stats_us[IO_LATENCY_STATS_US_NR];
 	/* latency statistic for block-layer buckets */
-	atomic_t soft_latency_stats_s[IO_LATENCY_STATS_S_NR];
-	atomic_t soft_latency_stats_ms[IO_LATENCY_STATS_MS_NR];
-	atomic_t soft_latency_stats_us[IO_LATENCY_STATS_US_NR];
-	atomic_t soft_latency_read_stats_s[IO_LATENCY_STATS_S_NR];
-	atomic_t soft_latency_read_stats_ms[IO_LATENCY_STATS_MS_NR];
-	atomic_t soft_latency_read_stats_us[IO_LATENCY_STATS_US_NR];
-	atomic_t soft_latency_write_stats_s[IO_LATENCY_STATS_S_NR];
-	atomic_t soft_latency_write_stats_ms[IO_LATENCY_STATS_MS_NR];
-	atomic_t soft_latency_write_stats_us[IO_LATENCY_STATS_US_NR];
+	unsigned long soft_latency_stats_s[IO_LATENCY_STATS_S_NR];
+	unsigned long soft_latency_stats_ms[IO_LATENCY_STATS_MS_NR];
+	unsigned long soft_latency_stats_us[IO_LATENCY_STATS_US_NR];
+	unsigned long soft_latency_read_stats_s[IO_LATENCY_STATS_S_NR];
+	unsigned long soft_latency_read_stats_ms[IO_LATENCY_STATS_MS_NR];
+	unsigned long soft_latency_read_stats_us[IO_LATENCY_STATS_US_NR];
+	unsigned long soft_latency_write_stats_s[IO_LATENCY_STATS_S_NR];
+	unsigned long soft_latency_write_stats_ms[IO_LATENCY_STATS_MS_NR];
+	unsigned long soft_latency_write_stats_us[IO_LATENCY_STATS_US_NR];
 	/* io size statistic buckets */
-	atomic_t io_size_stats[IO_SIZE_STATS_NR];
-	atomic_t io_read_size_stats[IO_SIZE_STATS_NR];
-	atomic_t io_write_size_stats[IO_SIZE_STATS_NR];
+	unsigned long io_size_stats[IO_SIZE_STATS_NR];
+	unsigned long io_read_size_stats[IO_SIZE_STATS_NR];
+	unsigned long io_write_size_stats[IO_SIZE_STATS_NR];
 };
 
 int init_latency_stats(void);
 void exit_latency_stats(void);
 
-struct latency_stats *create_latency_stats(void);
-void destroy_latency_stats(struct latency_stats *lstats);
+struct latency_stats __percpu *create_latency_stats(void);
+void destroy_latency_stats(struct latency_stats __percpu *lstats);
 
 void update_latency_stats(struct latency_stats *lstats, unsigned long stime,
 			unsigned long now, int soft, int rw);
 void update_io_size_stats(struct latency_stats *lstats, unsigned long size,
 			int rw);
-void reset_latency_stats(struct latency_stats *lstats);
+void reset_latency_stats(struct latency_stats __percpu *lstats);
 #endif
