@@ -23,6 +23,7 @@
 #include <linux/percpu.h>
 
 #include "latency_stats.h"
+#include "config.h"
 
 static struct kmem_cache *latency_stats_cache;
 
@@ -151,6 +152,9 @@ void update_latency_stats(struct latency_stats *lstats, unsigned long stime,
 		return;
 
 	latency = now - stime;
+#ifndef USE_US
+	latency *= 1000;
+#endif
 	if (latency < 1000) {
 		/* microseconds */
 		idx = latency/IO_LATENCY_STATS_US_GRAINSIZE;

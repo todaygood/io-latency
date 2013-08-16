@@ -3,8 +3,14 @@ io-latency-objs +=  io_latency.o hash_table.o latency_stats.o
 obj-m += hotfixes.o
 
 KERNEL_DEVEL_DIR=/lib/modules/`uname -r`/build
+ifdef USE_US
+	CONFIG="\#define USE_US 1"
+else
+	CONFIG=""
+endif
 
 all:
+	echo ${CONFIG} > config.h
 	make -C ${KERNEL_DEVEL_DIR} M=`pwd` modules
 
 clean:

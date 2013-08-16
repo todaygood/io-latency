@@ -12,6 +12,7 @@
 #include "hotfixes.h"
 #include "hash_table.h"
 #include "latency_stats.h"
+#include "config.h"
 
 #define IO_LATENCY_VERSION	"1.0.0"
 
@@ -146,7 +147,11 @@ static struct request *overwrite_get_request_wait(struct request_queue *q,
 		goto out;
 
 	/* put time into 'pad' now */
+#ifdef USE_US
 	req->pad = (void *)ktime_to_us(ktime_get());
+#else
+	req->pad = (void *)jiffies;
+#endif
 out:
 	return req;
 }
@@ -176,7 +181,11 @@ static int overwrite_scsi_dispatch_cmd(struct scsi_cmnd *cmd)
 	if (bytes <= 0)
 		goto out;
 
+#ifdef USE_US
 	now = ktime_to_us(ktime_get());
+#else
+	now = jiffies;
+#endif
 	if (aux->enable_soft_latency) {
 		stime = (unsigned long)req->pad;
 		update_latency_stats(this_cpu_ptr(aux->lstats),
@@ -214,7 +223,11 @@ static void overwrite_blk_finish_request(struct request *req, int error)
 
 	stime = (unsigned long)req->pad;
 	req->pad = NULL;
+#ifdef USE_US
 	now = ktime_to_us(ktime_get());
+#else
+	now = jiffies;
+#endif
 	update_latency_stats(this_cpu_ptr(aux->lstats),
 				stime, now, 0, rq_data_dir(req));
 out:
@@ -526,33 +539,35 @@ struct io_latency_proc_node {
 };
 
 static const struct io_latency_proc_node proc_node_list[] = {
-	{ "io_latency_us", &proc_io_latency_us_fops},
 	{ "io_latency_ms", &proc_io_latency_ms_fops},
 	{ "io_latency_s", &proc_io_latency_s_fops},
 
-	{ "read_io_latency_us", &proc_read_io_latency_us_fops},
 	{ "read_io_latency_ms", &proc_read_io_latency_ms_fops},
 	{ "read_io_latency_s", &proc_read_io_latency_s_fops},
 
-	{ "write_io_latency_us", &proc_write_io_latency_us_fops},
 	{ "write_io_latency_ms", &proc_write_io_latency_ms_fops},
 	{ "write_io_latency_s", &proc_write_io_latency_s_fops},
 
-	{ "soft_io_latency_us", &proc_soft_io_latency_us_fops},
 	{ "soft_io_latency_ms", &proc_soft_io_latency_ms_fops},
 	{ "soft_io_latency_s", &proc_soft_io_latency_s_fops},
 
-	{ "soft_read_io_latency_us", &proc_soft_read_io_latency_us_fops},
 	{ "soft_read_io_latency_ms", &proc_soft_read_io_latency_ms_fops},
 	{ "soft_read_io_latency_s", &proc_soft_read_io_latency_s_fops},
 
-	{ "soft_write_io_latency_us", &proc_soft_write_io_latency_us_fops},
 	{ "soft_wirte_io_latency_ms", &proc_soft_write_io_latency_ms_fops},
 	{ "soft_write_io_latency_s", &proc_soft_write_io_latency_s_fops},
 
 	{ "io_size", &proc_io_size_fops},
 	{ "io_read_size", &proc_io_read_size_fops},
 	{ "io_write_size", &proc_io_write_size_fops},
+#ifdef USE_US
+	{ "io_latency_us", &proc_io_latency_us_fops},
+	{ "read_io_latency_us", &proc_read_io_latency_us_fops},
+	{ "write_io_latency_us", &proc_write_io_latency_us_fops},
+	{ "soft_io_latency_us", &proc_soft_io_latency_us_fops},
+	{ "soft_read_io_latency_us", &proc_soft_read_io_latency_us_fops},
+	{ "soft_write_io_latency_us", &proc_soft_write_io_latency_us_fops},
+#endif
 };
 
 static int create_procfs(void)
