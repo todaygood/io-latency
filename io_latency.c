@@ -14,7 +14,7 @@
 #include "latency_stats.h"
 #include "config.h"
 
-#define IO_LATENCY_VERSION	"1.0.0"
+#define IO_LATENCY_VERSION	"1.1.1"
 
 #define HOTFIX_GET_REQUEST	0
 #define HOTFIX_SCSI_DISPATCH	1
