@@ -554,7 +554,7 @@ static const struct io_latency_proc_node proc_node_list[] = {
 	{ "soft_read_io_latency_ms", &proc_soft_read_io_latency_ms_fops},
 	{ "soft_read_io_latency_s", &proc_soft_read_io_latency_s_fops},
 
-	{ "soft_wirte_io_latency_ms", &proc_soft_write_io_latency_ms_fops},
+	{ "soft_write_io_latency_ms", &proc_soft_write_io_latency_ms_fops},
 	{ "soft_write_io_latency_s", &proc_soft_write_io_latency_s_fops},
 
 	{ "io_size", &proc_io_size_fops},
