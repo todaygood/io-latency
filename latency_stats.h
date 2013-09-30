@@ -3,6 +3,14 @@
 
 #include <linux/types.h>
 
+#include "config.h"
+/* for 2.6.32.36xen */
+#ifdef USE_HASH_TABLE
+	#ifndef __percpu
+	#define __percpu
+	#endif
+#endif
+
 /* 300s is max disk I/O latency which application may accept */
 #define IO_LATENCY_STATS_S_NR		100
 #define IO_LATENCY_STATS_S_GRAINSIZE	(1000/IO_LATENCY_STATS_S_NR)

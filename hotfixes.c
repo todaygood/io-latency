@@ -9,6 +9,7 @@
 #include <linux/vmalloc.h>
 #include <linux/mutex.h>
 
+#include "config.h"
 #include "hotfixes.h"
 
 #define PROC_ENTRY_NAME "hotfixes"
@@ -18,6 +19,80 @@
 static void *(*my_text_poke_smp)(void *addr, const void *opcode, size_t len);
 static struct mutex *my_text_mutex;
 static void *(*my_module_alloc)(unsigned long size);
+
+#ifdef USE_HASH_TABLE
+#include <linux/stop_machine.h>
+#include <asm-generic/cacheflush.h>
+
+static inline void my_list_del(struct list_head *entry)
+{
+	__list_del(entry->prev, entry->next);
+	entry->next = LIST_POISON1;
+	entry->prev = LIST_POISON2;
+}
+
+static inline void my__list_add(struct list_head *new, struct list_head *prev,
+							struct list_head *next)
+{
+	next->prev = new;
+	new->next = next;
+	new->prev = prev;
+	prev->next = new;
+}
+
+static inline void my_list_add_tail(struct list_head *new,
+					struct list_head *head)
+{
+	my__list_add(new, head->prev, head);
+}
+
+static atomic_t stop_machine_first;
+static int wrote_text;
+
+struct text_poke_params {
+	void *addr;
+	const void *opcode;
+	size_t len;
+};
+
+static void *(*my_text_poke)(void *addr, const void *opcode, size_t len);
+
+static int __kprobes stop_machine_text_poke(void *data)
+{
+	struct text_poke_params *tpp = data;
+
+	if (atomic_dec_and_test(&stop_machine_first)) {
+		my_text_poke(tpp->addr, tpp->opcode, tpp->len);
+		smp_wmb();      /* Make sure other cpus see that this has run */
+		wrote_text = 1;
+	} else {
+		while (!wrote_text)
+			cpu_relax();
+		smp_mb();       /* Load wrote_text before following execution */
+	}
+
+	flush_icache_range((unsigned long)tpp->addr,
+			   (unsigned long)tpp->addr + tpp->len);
+	return 0;
+}
+
+void *__kprobes text_poke_smp(void *addr, const void *opcode, size_t len)
+{
+	struct text_poke_params tpp;
+
+	tpp.addr = addr;
+	tpp.opcode = opcode;
+	tpp.len = len;
+	atomic_set(&stop_machine_first, 1);
+	wrote_text = 0;
+	/* Use __stop_machine() because the caller already got online_cpus. */
+	stop_machine(stop_machine_text_poke, (void *)&tpp, cpu_online_mask);
+	return addr;
+}
+#else
+#define my_list_add_tail(new, head) list_add_tail(new, head)
+#define my_list_del(entry) list_del(entry)
+#endif
 
 void *ali_get_symbol_address(const char *name)
 {
@@ -126,7 +201,7 @@ out:
 	{
 		int i;
 
-		pr_warn("hotfixes: failed to create orig "
+		printk(KERN_WARNING "hotfixes: failed to create orig "
 				"stub of %s(), binary are:", h->func);
 		for (i = 0; i < 16; i++)
 			printk(" %x", *(((unsigned char *)h->addr)+i));
@@ -183,9 +258,16 @@ static void del_hotfix(struct ali_hotfix *h)
 
 static int init_hotfix(void)
 {
+#ifdef USE_HASH_TABLE
+	my_text_poke = (void *)ali_get_symbol_address("text_poke");
+	if (!my_text_poke)
+		return -EINVAL;
+	my_text_poke_smp = text_poke_smp;
+#else
 	my_text_poke_smp = (void *)ali_get_symbol_address("text_poke_smp");
 	if (!my_text_poke_smp)
 		return -EINVAL;
+#endif
 
 	my_text_mutex = (void *)ali_get_symbol_address("text_mutex");
 	if (!my_text_mutex)
@@ -236,7 +318,7 @@ int ali_hotfix_register(struct ali_hotfix_desc *descp)
 	if (ret)
 		goto unlock;
 	INIT_LIST_HEAD(&descp->list);
-	list_add_tail(&descp->list, &hotfix_desc_head);
+	my_list_add_tail(&descp->list, &hotfix_desc_head);
 unlock:
 	mutex_unlock(&hotfix_lock);
 	return ret;
@@ -248,7 +330,7 @@ void ali_hotfix_unregister(struct ali_hotfix_desc *descp)
 	if (!descp)
 		return;
 	mutex_lock(&hotfix_lock);
-	list_del(&descp->list);
+	my_list_del(&descp->list);
 	mutex_unlock(&hotfix_lock);
 	del_hotfix(&descp->hotfix);
 }

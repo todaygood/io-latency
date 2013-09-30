@@ -23,7 +23,6 @@
 #include <linux/percpu.h>
 
 #include "latency_stats.h"
-#include "config.h"
 
 static struct kmem_cache *latency_stats_cache;
 
