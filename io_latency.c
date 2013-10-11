@@ -6,6 +6,7 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/time.h>
+#include <linux/async.h>
 #include <scsi/scsi_device.h>
 #include <scsi/scsi_cmnd.h>
 
@@ -19,6 +20,7 @@
 #define HOTFIX_GET_REQUEST	0
 #define HOTFIX_SCSI_DISPATCH	1
 #define HOTFIX_FINISH_REQUEST	2
+#define HOTFIX_SD_PROBE_ASYNC	3
 
 #define MAX_REQUEST_QUEUE	97
 #define MAX_REQUESTS		9973
@@ -102,6 +104,8 @@ struct scsi_disk {
 	unsigned	ws16 : 1;
 };
 
+static struct request_queue_aux *insert_aux(struct scsi_disk *sd);
+
 static struct ali_sym_addr io_latency_sym_addr_list[] = {
 	ALI_DEFINE_SYM_ADDR(get_request_wait),
 	ALI_DEFINE_SYM_ADDR(scsi_dispatch_cmd),
@@ -112,6 +116,7 @@ static struct request *overwrite_get_request_wait(struct request_queue *q,
 		int rw_flags, struct bio *bio);
 static int overwrite_scsi_dispatch_cmd(struct scsi_cmnd *cmd);
 static void overwrite_blk_finish_request(struct request *req, int error);
+static void overwrite_sd_probe_async(void *data, async_cookie_t cookie);
 
 static struct ali_hotfix_desc io_latency_hotfix_list[] = {
 
@@ -130,8 +135,27 @@ static struct ali_hotfix_desc io_latency_hotfix_list[] = {
 			"blk_finish_request", \
 			overwrite_blk_finish_request),
 
+	[HOTFIX_SD_PROBE_ASYNC] = ALI_DEFINE_HOTFIX( \
+			"scsi: sd_probe_async", \
+			"sd_probe_async", \
+			overwrite_sd_probe_async),
 	{},
 };
+
+static void (*orig_sd_probe_async)(void *data, async_cookie_t cookie);
+static void overwrite_sd_probe_async(void *data, async_cookie_t cookie)
+{
+	struct scsi_disk *sdkp = data;
+	struct hash_node *queue_nd;
+
+	queue_nd = hash_table_find(request_queue_table,
+			(unsigned long)sdkp->device->request_queue);
+	if (!queue_nd)
+		insert_aux(sdkp);
+	orig_sd_probe_async = ali_hotfix_orig_func(
+			&io_latency_hotfix_list[HOTFIX_GET_REQUEST]);
+	orig_sd_probe_async(data, cookie);
+}
 
 static struct request *(*orig_get_request_wait)(struct request_queue *q,
 		int rw_flags, struct bio *bio);
@@ -671,20 +695,60 @@ static const struct io_latency_proc_node proc_node_list[] = {
 #endif
 };
 
+static struct request_queue_aux *insert_aux(struct scsi_disk *sd)
+{
+	struct request_queue_aux *aux;
+	struct latency_stats __percpu *lstats;
+#ifdef USE_HASH_TABLE
+	char table_name[MAX_HASH_TABLE_NAME_LEN];
+	struct hash_table *request_table = NULL;
+#endif
+
+	lstats = create_latency_stats();
+	if (!lstats)
+		goto err;
+
+#ifdef USE_HASH_TABLE
+	sprintf(table_name, "htable-%s", sd->disk->sdev_gendev->disk_name);
+	request_table = create_hash_table(table_name, MAX_REQUESTS);
+	if (!request_table)
+		goto err;
+	aux = (struct request_queue_aux *)kmem_cache_zalloc(
+			request_table_aux_cache, GFP_KERNEL);
+	if (!aux) {
+		destroy_hash_table(request_table);
+		goto err;
+	}
+	aux->hash_table = request_table;
+#else
+	aux = (struct request_queue_aux *)kmem_cache_zalloc(
+			request_table_aux_cache, GFP_KERNEL);
+	if (!aux)
+		goto err;
+	sd->device->request_queue->pad = aux;
+#endif
+	aux->lstats = lstats;
+	aux->enable_latency = 1;
+	aux->enable_soft_latency = 1;
+	hash_table_insert(request_queue_table,
+			(unsigned long)(sd->device->request_queue),
+			(unsigned long)aux);
+	return aux;
+err:
+	if (lstats)
+		destroy_latency_stats(lstats);
+	return NULL;
+}
+
 static int create_procfs(void)
 {
 	struct class_dev_iter iter;
 	struct device *dev;
 	struct scsi_disk *sd;
 	struct proc_dir_entry *proc_node, *proc_dir;
-	struct latency_stats __percpu *lstats;
 	struct request_queue_aux *aux;
 	int num = sizeof(proc_node_list) / sizeof(struct io_latency_proc_node);
 	int i;
-#ifdef USE_HASH_TABLE
-	char table_name[MAX_HASH_TABLE_NAME_LEN];
-	struct hash_table *request_table = NULL;
-#endif
 
 	proc_io_latency = proc_mkdir("io-latency", NULL);
 	if (!proc_io_latency)
@@ -744,39 +808,9 @@ static int create_procfs(void)
 		proc_node->write_proc = store_enable_soft_latency;
 		add_proc_node("enable_soft_latency", proc_node, proc_dir);
 
-		lstats = create_latency_stats();
-		if (!lstats)
+		aux = insert_aux(sd);
+		if (!aux)
 			goto err;
-#ifdef USE_HASH_TABLE
-		sprintf(table_name, "htable-%s", sd->disk->disk_name);
-		request_table = create_hash_table(table_name, MAX_REQUESTS);
-		if (!request_table) {
-			destroy_latency_stats(lstats);
-			goto err;
-		}
-		aux = (struct request_queue_aux *)kmem_cache_zalloc(
-				request_table_aux_cache, GFP_KERNEL);
-		if (!aux) {
-			destroy_hash_table(request_table);
-			destroy_latency_stats(lstats);
-			goto err;
-		}
-		aux->hash_table = request_table;
-#else
-		aux = (struct request_queue_aux *)kmem_cache_zalloc(
-				request_table_aux_cache, GFP_KERNEL);
-		if (!aux) {
-			destroy_latency_stats(lstats);
-			goto err;
-		}
-		sd->device->request_queue->pad = aux;
-#endif
-		aux->lstats = lstats;
-		aux->enable_latency = 1;
-		aux->enable_soft_latency = 1;
-		hash_table_insert(request_queue_table,
-				(unsigned long)(sd->device->request_queue),
-				(unsigned long)aux);
 	}
 	class_dev_iter_exit(&iter);
 
