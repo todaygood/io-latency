@@ -56,7 +56,9 @@ response-time(RT) of IO on linux.
 
 	'enable 1 > /proc/io-latency/sdx/io_stats_reset'
 
-
+3. How to build rpm package
+	
+	sh rpm/io-latency-build.sh `pwd`
 
 io-latency
 ===========
@@ -116,3 +118,6 @@ io-latency是一个统计linux里IO延时信息的内核模块
 
 	'enable 1 > /proc/io-latency/sdx/io_stats_reset'
 
+3. 怎样打rpm包
+	
+	sh rpm/io-latency-build.sh `pwd`
