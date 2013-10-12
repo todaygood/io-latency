@@ -42,17 +42,6 @@ struct proc_entry_name {
 static struct proc_entry_name *dir_proc_list;
 static int nr_dir_proc;
 
-static void add_proc_node(const char *name, struct proc_dir_entry *node,
-			struct proc_dir_entry *parent)
-{
-	dir_proc_list[nr_dir_proc].entry = node;
-	dir_proc_list[nr_dir_proc].parent = parent;
-	strncpy(dir_proc_list[nr_dir_proc].name, name, 64);
-	nr_dir_proc++;
-}
-
-static void delete_procfs(void);
-
 /* every request_queue has an instance of this struct */
 struct request_queue_aux {
 	struct latency_stats __percpu *lstats;
@@ -105,6 +94,7 @@ struct scsi_disk {
 };
 
 static struct request_queue_aux *insert_aux(struct scsi_disk *sd);
+static int insert_procfs(struct scsi_disk *sd);
 
 static struct ali_sym_addr io_latency_sym_addr_list[] = {
 	ALI_DEFINE_SYM_ADDR(get_request_wait),
@@ -150,8 +140,10 @@ static void overwrite_sd_probe_async(void *data, async_cookie_t cookie)
 
 	queue_nd = hash_table_find(request_queue_table,
 			(unsigned long)sdkp->device->request_queue);
-	if (!queue_nd)
+	if (!queue_nd) {
+		insert_procfs(sdkp);
 		insert_aux(sdkp);
+	}
 	orig_sd_probe_async = ali_hotfix_orig_func(
 			&io_latency_hotfix_list[HOTFIX_GET_REQUEST]);
 	orig_sd_probe_async(data, cookie);
@@ -695,6 +687,74 @@ static const struct io_latency_proc_node proc_node_list[] = {
 #endif
 };
 
+#define PROC_NUM (sizeof(proc_node_list) / sizeof(struct io_latency_proc_node))
+#define DIR_PROC_NUM (MAX_REQUEST_QUEUE * (PROC_NUM + 3))
+
+static void add_proc_node(const char *name, struct proc_dir_entry *node,
+			struct proc_dir_entry *parent)
+{
+	if (nr_dir_proc < DIR_PROC_NUM) {
+		dir_proc_list[nr_dir_proc].entry = node;
+		dir_proc_list[nr_dir_proc].parent = parent;
+		strncpy(dir_proc_list[nr_dir_proc].name, name, 64);
+		nr_dir_proc++;
+	}
+}
+
+static void delete_procfs(void);
+
+static int insert_procfs(struct scsi_disk *sd)
+{
+	struct proc_dir_entry *proc_node, *proc_dir;
+	int i;
+
+	proc_dir = proc_mkdir(sd->disk->disk_name, proc_io_latency);
+	if (!proc_dir)
+		goto err;
+	add_proc_node(sd->disk->disk_name, proc_dir, proc_io_latency);
+
+	for (i = 0; i < PROC_NUM; i++) {
+		proc_node = proc_create_data(proc_node_list[i].name,
+					S_IFREG, proc_dir,
+					proc_node_list[i].fops,
+					sd->device->request_queue);
+		if (!proc_node)
+			goto err;
+		add_proc_node(proc_node_list[i].name, proc_node,
+				proc_dir);
+	}
+	/* create io_stats_reset */
+	proc_node = proc_create_data("io_stats_reset", S_IFREG,
+				proc_dir, NULL,
+				sd->device->request_queue);
+	if (!proc_node)
+		goto err;
+	proc_node->read_proc = show_io_stats_reset;
+	proc_node->write_proc = store_io_stats_reset;
+	add_proc_node("io_stats_reset", proc_node, proc_dir);
+	/* create enable_latency */
+	proc_node = proc_create_data("enable_latency", S_IFREG,
+				proc_dir, NULL,
+				sd->device->request_queue);
+	if (!proc_node)
+		goto err;
+	proc_node->read_proc = show_enable_latency;
+	proc_node->write_proc = store_enable_latency;
+	add_proc_node("enable_latency", proc_node, proc_dir);
+	/* create enable_soft_latency */
+	proc_node = proc_create_data("enable_soft_latency", S_IFREG,
+				proc_dir, NULL,
+				sd->device->request_queue);
+	if (!proc_node)
+		goto err;
+	proc_node->read_proc = show_enable_soft_latency;
+	proc_node->write_proc = store_enable_soft_latency;
+	add_proc_node("enable_soft_latency", proc_node, proc_dir);
+	return 0;
+err:
+	return -1;
+}
+
 static struct request_queue_aux *insert_aux(struct scsi_disk *sd)
 {
 	struct request_queue_aux *aux;
@@ -745,10 +805,7 @@ static int create_procfs(void)
 	struct class_dev_iter iter;
 	struct device *dev;
 	struct scsi_disk *sd;
-	struct proc_dir_entry *proc_node, *proc_dir;
 	struct request_queue_aux *aux;
-	int num = sizeof(proc_node_list) / sizeof(struct io_latency_proc_node);
-	int i;
 
 	proc_io_latency = proc_mkdir("io-latency", NULL);
 	if (!proc_io_latency)
@@ -757,57 +814,16 @@ static int create_procfs(void)
 	/* proc_node in proc_node_list and
 	 * 'io_stats_reset' 'enable_latency' 'enable_soft_latency'
 	 */
-	dir_proc_list = kzalloc(sizeof(struct proc_entry_name) *
-			MAX_REQUEST_QUEUE * (num + 3), GFP_KERNEL);
+	dir_proc_list = kzalloc(sizeof(struct proc_entry_name) * DIR_PROC_NUM,
+			GFP_KERNEL);
 	if (!dir_proc_list)
 		goto err;
 
 	class_dev_iter_init(&iter, sd_disk_class, NULL, NULL);
 	while ((dev = class_dev_iter_next(&iter))) {
 		sd = container_of(dev, struct scsi_disk, dev);
-		proc_dir = proc_mkdir(sd->disk->disk_name, proc_io_latency);
-		if (!proc_dir)
+		if (insert_procfs(sd))
 			goto err;
-		add_proc_node(sd->disk->disk_name, proc_dir, proc_io_latency);
-
-		for (i = 0; i < num; i++) {
-			proc_node = proc_create_data(proc_node_list[i].name,
-						S_IFREG, proc_dir,
-						proc_node_list[i].fops,
-						sd->device->request_queue);
-			if (!proc_node)
-				goto err;
-			add_proc_node(proc_node_list[i].name, proc_node,
-					proc_dir);
-		}
-		/* create io_stats_reset */
-		proc_node = proc_create_data("io_stats_reset", S_IFREG,
-					proc_dir, NULL,
-					sd->device->request_queue);
-		if (!proc_node)
-			goto err;
-		proc_node->read_proc = show_io_stats_reset;
-		proc_node->write_proc = store_io_stats_reset;
-		add_proc_node("io_stats_reset", proc_node, proc_dir);
-		/* create enable_latency */
-		proc_node = proc_create_data("enable_latency", S_IFREG,
-					proc_dir, NULL,
-					sd->device->request_queue);
-		if (!proc_node)
-			goto err;
-		proc_node->read_proc = show_enable_latency;
-		proc_node->write_proc = store_enable_latency;
-		add_proc_node("enable_latency", proc_node, proc_dir);
-		/* create enable_soft_latency */
-		proc_node = proc_create_data("enable_soft_latency", S_IFREG,
-					proc_dir, NULL,
-					sd->device->request_queue);
-		if (!proc_node)
-			goto err;
-		proc_node->read_proc = show_enable_soft_latency;
-		proc_node->write_proc = store_enable_soft_latency;
-		add_proc_node("enable_soft_latency", proc_node, proc_dir);
-
 		aux = insert_aux(sd);
 		if (!aux)
 			goto err;
